@@ -1,0 +1,33 @@
+{
+  "name": "neural-necropolis",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Neural Necropolis — Where Dead Code Dreams of Vengeance. AI agents explore, fight, loot, and escape a procedurally generated dungeon.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "engine": "node scripts/run-engine.mjs",
+    "engine:build": "node scripts/run-engine.mjs --build",
+    "dev:server": "npm run engine",
+    "dev:duel": "concurrently -k -n engine,b1,b2,b3,b4,e1,e2,e3,t1,t2,t3 -c blue,red,red,red,red,green,green,green,yellow,yellow,yellow \"cross-env BEAT_PLANNING_MS=3000 BEAT_ACTION_MS=500 npm run engine\" \"cross-env BOT_SLOT=B1 tsx watch src/agents/bots/berserker.ts\" \"cross-env BOT_SLOT=B2 tsx watch src/agents/bots/berserker.ts\" \"cross-env BOT_SLOT=B3 tsx watch src/agents/bots/berserker.ts\" \"cross-env BOT_SLOT=B4 tsx watch src/agents/bots/berserker.ts\" \"cross-env BOT_SLOT=E1 tsx watch src/agents/bots/explorer.ts\" \"cross-env BOT_SLOT=E2 tsx watch src/agents/bots/explorer.ts\" \"cross-env BOT_SLOT=E3 tsx watch src/agents/bots/explorer.ts\" \"cross-env BOT_SLOT=T1 tsx watch src/agents/bots/treasure-hunter.ts\" \"cross-env BOT_SLOT=T2 tsx watch src/agents/bots/treasure-hunter.ts\" \"cross-env BOT_SLOT=T3 tsx watch src/agents/bots/treasure-hunter.ts\"",
+    "dev:dual": "npm run dev:duel",
+    "dev:duel:aibot": "concurrently -k -n engine,ai1,ai2,ai3,ai4,ai5,ai6,ai7,ai8,ai9,ai10 -c blue,magenta,cyan,yellow,green,red,white,blue,magenta,cyan,yellow \"cross-env BEAT_PLANNING_MS=8000 BEAT_ACTION_MS=500 npm run engine\" \"cross-env AIBOT_SLOT=A tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=B tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=C tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=D tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=E tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=F tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=G tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=H tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=I tsx watch src/agents/bots/aibot.ts\" \"cross-env AIBOT_SLOT=J tsx watch src/agents/bots/aibot.ts\"",
+    "dev:runner": "tsx watch src/runner.ts",
+    "dev:bot:berserker": "tsx watch src/agents/bots/berserker.ts",
+    "dev:bot:treasure": "tsx watch src/agents/bots/treasure-hunter.ts",
+    "dev:bot:explorer": "tsx watch src/agents/bots/explorer.ts",
+    "dev:bot:aibot": "tsx watch src/agents/bots/aibot.ts",
+    "dev:all": "concurrently -k -n engine,runner,berserker,treasure,explorer,aibot -c blue,white,red,yellow,green,magenta \"npm run engine\" \"npm run dev:runner\" \"npm run dev:bot:berserker\" \"npm run dev:bot:treasure\" \"npm run dev:bot:explorer\" \"npm run dev:bot:aibot\""
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "openai": "^6.31.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
