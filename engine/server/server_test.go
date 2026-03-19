@@ -58,6 +58,38 @@ func TestTryAutoStartBoardRespectsGlobalWarmup(t *testing.T) {
 	}
 }
 
+func TestTryAutoStartBoardRespectsPausedFlag(t *testing.T) {
+	s := &Server{
+		mgr:          game.NewManager(),
+		planningMs:   1000,
+		actionMs:     1000,
+		gameSettings: game.GameSettings{Paused: true},
+	}
+
+	for i := 0; i < game.CFG.MinBotsToStart; i++ {
+		_, _, err := s.mgr.RegisterHero(game.HeroRegistration{
+			ID:       game.EntityID(fmt.Sprintf("hero-paused-%d", i)),
+			Name:     fmt.Sprintf("HeroPaused-%d", i),
+			Strategy: "test strategy",
+		})
+		if err != nil {
+			t.Fatalf("register hero %d: %v", i, err)
+		}
+	}
+
+	if board, started := s.tryAutoStartBoard(); started || board != nil {
+		t.Fatalf("auto-start triggered while paused: started=%v board=%v", started, board)
+	}
+
+	active := s.mgr.ActiveBoard()
+	if active == nil {
+		t.Fatal("expected active board while paused")
+	}
+	if active.Lifecycle() != game.LifecycleOpen {
+		t.Fatalf("active board lifecycle = %s, want %s while paused", active.Lifecycle(), game.LifecycleOpen)
+	}
+}
+
 func TestFormatWindowMs(t *testing.T) {
 	tests := []struct {
 		name string

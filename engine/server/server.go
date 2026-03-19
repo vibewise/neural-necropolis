@@ -156,6 +156,12 @@ func (s *Server) warmupRemainingMs(now time.Time) int64 {
 }
 
 func (s *Server) tryAutoStartBoard() (*game.Board, bool) {
+	s.mu.RLock()
+	paused := s.gameSettings.Paused
+	s.mu.RUnlock()
+	if paused {
+		return nil, false
+	}
 	if s.warmupRemainingMs(time.Now()) > 0 {
 		return nil, false
 	}

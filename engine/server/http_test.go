@@ -91,6 +91,11 @@ type adminSnapshotResponse struct {
 	Snapshot       game.BoardSnapshot `json:"snapshot"`
 }
 
+type adminSettingsResponse struct {
+	OK       bool              `json:"ok"`
+	Settings game.GameSettings `json:"settings"`
+}
+
 func newHTTPTestServer() *Server {
 	return &Server{
 		mgr:           game.NewManager(),
@@ -206,6 +211,29 @@ func TestPublicAPIRegisterObserveActAndLogRoutes(t *testing.T) {
 	badLog := performRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/log", `{"message":"   "}`)
 	if badLog.Code != http.StatusBadRequest {
 		t.Fatalf("blank log status = %d, want 400; body=%s", badLog.Code, badLog.Body.String())
+	}
+}
+
+func TestRegisterRouteDoesNotAutoStartBoardWhilePaused(t *testing.T) {
+	s := newHTTPTestServer()
+	s.gameSettings = game.GameSettings{Paused: true}
+
+	for i := 0; i < game.CFG.MinBotsToStart; i++ {
+		registerHTTPTestHero(t, s, fmt.Sprintf("hero-paused-http-%d", i))
+	}
+
+	board := s.mgr.ActiveBoard()
+	if board == nil {
+		t.Fatal("expected active board after paused registrations")
+	}
+	if board.Lifecycle() != game.LifecycleOpen {
+		t.Fatalf("board lifecycle = %s, want %s while paused", board.Lifecycle(), game.LifecycleOpen)
+	}
+	if state := s.getTurnState(board); state.Started {
+		t.Fatalf("turn state started = %v, want false while paused", state.Started)
+	}
+	if board.EventCount() == 0 {
+		t.Fatal("expected registration events to still be recorded")
 	}
 }
 
@@ -555,4 +583,36 @@ func TestAdminRoutesStartStopAndReset(t *testing.T) {
 		t.Fatalf("admin reset board id = %q, want a fresh board distinct from %q", resetPayload.BoardID, board.ID)
 	}
 	defer s.stopBeatLoop()
+}
+
+func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
+	s := newHTTPTestServer()
+	s.gameSettings = game.GameSettings{Paused: true}
+
+	registerHTTPTestHero(t, s, "hero-settings-1")
+	registerHTTPTestHero(t, s, "hero-settings-2")
+
+	board := s.mgr.ActiveBoard()
+	if board == nil {
+		t.Fatal("expected active board")
+	}
+	if board.Lifecycle() != game.LifecycleOpen {
+		t.Fatalf("board lifecycle before unpause = %s, want %s", board.Lifecycle(), game.LifecycleOpen)
+	}
+
+	settingsRec := performRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false}`)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("admin settings status = %d, want 200; body=%s", settingsRec.Code, settingsRec.Body.String())
+	}
+	settingsPayload := decodeJSONInto[adminSettingsResponse](t, settingsRec)
+	if !settingsPayload.OK || settingsPayload.Settings.Paused {
+		t.Fatalf("admin settings payload = %+v, want unpaused settings", settingsPayload)
+	}
+
+	if board.Lifecycle() != game.LifecycleOpen {
+		t.Fatalf("board lifecycle after unpause = %s, want %s with only 2 heroes", board.Lifecycle(), game.LifecycleOpen)
+	}
+	if turnState := s.getTurnState(board); turnState.Started {
+		t.Fatalf("turn state started = %v, want false after unpausing underfilled board", turnState.Started)
+	}
 }

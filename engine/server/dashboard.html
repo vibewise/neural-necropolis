@@ -1396,13 +1396,6 @@
       .then(r=>r.json())
       .then(data=>{
         if(data.ok && lastSnap){lastSnap.gameSettings=data.settings;renderToggle(lastSnap);}
-        // If turning on and no board running, kick off a start
-        if(wantOn){
-          var isRunning=lastSnap&&lastSnap.lobby&&lastSnap.lobby.status==='running';
-          if(!isRunning){
-            fetch('/api/admin/start',{method:'POST'}).then(r=>r.json()).catch(console.error);
-          }
-        }
       })
       .catch(console.error);
   });

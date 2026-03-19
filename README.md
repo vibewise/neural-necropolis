@@ -24,7 +24,13 @@ npm run dev:duel
 
 This starts the game engine plus a roster of predefined bots.
 
-By default the game starts immediately once enough heroes join. If you want a pre-start lobby delay, set `BOARD_WARMUP_MS` in `.env`.
+By default the server starts with turns paused. Use the dashboard's `Turns ON` toggle to enable normal auto-start behavior.
+
+Once turns are on, a board auto-starts only when all of these are true:
+
+- no other board is currently running
+- at least 4 heroes are attached to the open board
+- any configured `BOARD_WARMUP_MS` delay has expired
 
 If port `3000` is already used on your machine, set a different port once and use the same value for bots/runner:
 
@@ -67,7 +73,7 @@ What they do:
 - `npm run dev:duel:aibot`: run the engine plus 10 AI bots (slots A–J); 4 bots play per board, the submit window is 8 seconds; each slot reads its own provider, model, trait, and mission from the environment
 - `npm run dev:all`: run the engine, runner, predefined bots, and one AI bot together
 
-The dashboard also includes manual `Start Board`, `Stop Board`, and `New Board` controls for recovery/testing.
+The dashboard uses a `Turns ON` / `Turns OFF` toggle. `Turns ON` resumes normal auto-start rules; it does not force-start underfilled boards.
 
 ## Cross-Platform Notes (Linux + Windows)
 
