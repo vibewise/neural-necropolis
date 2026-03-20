@@ -90,6 +90,78 @@ func TestTryAutoStartBoardRespectsPausedFlag(t *testing.T) {
 	}
 }
 
+func TestTryAutoStartBoardWaitsForJoinWindowBeforeStartingSmallLobby(t *testing.T) {
+	oldJoinWindow := game.CFG.BoardJoinWindowMs
+	oldMinAfterWait := game.CFG.MinBotsAfterWait
+	game.CFG.BoardJoinWindowMs = 10_000
+	game.CFG.MinBotsAfterWait = 1
+	t.Cleanup(func() {
+		game.CFG.BoardJoinWindowMs = oldJoinWindow
+		game.CFG.MinBotsAfterWait = oldMinAfterWait
+	})
+
+	s := &Server{
+		mgr:        game.NewManager(),
+		planningMs: 1000,
+		actionMs:   1000,
+	}
+
+	board, _, err := s.mgr.RegisterHero(game.HeroRegistration{
+		ID:       game.EntityID("hero-wait"),
+		Name:     "WaitHero",
+		Strategy: "test strategy",
+	})
+	if err != nil {
+		t.Fatalf("register hero: %v", err)
+	}
+
+	deadline := board.AutoStartAfter()
+	if deadline.IsZero() {
+		t.Fatal("expected join window to be armed for first hero")
+	}
+	if boardStarted, started := s.tryAutoStartBoard(); started || boardStarted != nil {
+		t.Fatalf("auto-start triggered before join window elapsed: started=%v board=%v", started, boardStarted)
+	}
+
+	board.SetAutoStartAfter(time.Now().Add(-1 * time.Second))
+	boardStarted, started := s.tryAutoStartBoard()
+	if !started || boardStarted == nil {
+		t.Fatalf("expected auto-start after join window elapsed, got started=%v board=%v", started, boardStarted)
+	}
+	if boardStarted.Lifecycle() != game.LifecycleRunning {
+		t.Fatalf("board lifecycle = %s, want %s", boardStarted.Lifecycle(), game.LifecycleRunning)
+	}
+}
+
+func TestTryAutoStartBoardStartsImmediatelyWhenLobbyFills(t *testing.T) {
+	s := &Server{
+		mgr:        game.NewManager(),
+		planningMs: 1000,
+		actionMs:   1000,
+	}
+
+	var board *game.Board
+	for i := 0; i < game.CFG.MinBotsToStart; i++ {
+		registeredBoard, _, err := s.mgr.RegisterHero(game.HeroRegistration{
+			ID:       game.EntityID(fmt.Sprintf("hero-fill-%d", i)),
+			Name:     fmt.Sprintf("FillHero-%d", i),
+			Strategy: "test strategy",
+		})
+		if err != nil {
+			t.Fatalf("register hero %d: %v", i, err)
+		}
+		board = registeredBoard
+	}
+
+	if deadline := board.AutoStartAfter(); !deadline.IsZero() {
+		t.Fatalf("expected full lobby to clear join window, got %v", deadline)
+	}
+	boardStarted, started := s.tryAutoStartBoard()
+	if !started || boardStarted == nil {
+		t.Fatalf("expected immediate auto-start for full lobby, got started=%v board=%v", started, boardStarted)
+	}
+}
+
 func TestFormatWindowMs(t *testing.T) {
 	tests := []struct {
 		name string

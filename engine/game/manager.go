@@ -142,6 +142,7 @@ func (m *Manager) GetRegistrationBoard() *Board {
 func (m *Manager) RegisterHero(input HeroRegistration) (*Board, *HeroProfile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
 
 	for {
 		for _, id := range m.order {
@@ -152,6 +153,12 @@ func (m *Manager) RegisterHero(input HeroRegistration) (*Board, *HeroProfile, er
 
 			hero, err := b.RegisterHero(input)
 			if err == nil {
+				_, armed, immediate := b.RecalculateAutoStartAfter(now)
+				if armed {
+					b.AddSystemEvent(fmt.Sprintf("Board will auto-start in %.1fs unless the lobby fills first.", float64(CFG.BoardJoinWindowMs)/1000))
+				} else if immediate {
+					b.AddSystemEvent(fmt.Sprintf("Board reached %d heroes and can start immediately.", CFG.MinBotsToStart))
+				}
 				return b, hero, nil
 			}
 			if errors.Is(err, ErrHeroCapacityReached) {
@@ -177,6 +184,13 @@ func (m *Manager) RegisterHero(input HeroRegistration) (*Board, *HeroProfile, er
 			hero, err := created.RegisterHero(input)
 			if err != nil {
 				return nil, nil, err
+			}
+			deadline, armed, immediate := created.RecalculateAutoStartAfter(now)
+			_ = deadline
+			if armed {
+				created.AddSystemEvent(fmt.Sprintf("Board will auto-start in %.1fs unless the lobby fills first.", float64(CFG.BoardJoinWindowMs)/1000))
+			} else if immediate {
+				created.AddSystemEvent(fmt.Sprintf("Board reached %d heroes and can start immediately.", CFG.MinBotsToStart))
 			}
 			return created, hero, nil
 		}
@@ -256,10 +270,11 @@ func (m *Manager) TryAutoStart() (*Board, bool) {
 			continue
 		}
 		b.mu.RLock()
+		canStart := b.canAutoStartLocked(time.Now())
 		heroCount := len(b.state.Heroes)
 		b.mu.RUnlock()
 
-		if heroCount >= CFG.MinBotsToStart {
+		if canStart {
 			b.SetLifecycle(LifecycleRunning)
 			b.SetAutoStartAfter(time.Time{})
 			b.SetCompletionReason("")
@@ -348,16 +363,18 @@ func (m *Manager) Snapshot() ManagerSnapshot {
 		default:
 			if heroCount == 0 {
 				queueStatus = "waiting for heroes"
-			} else if heroCount < CFG.MinBotsToStart {
-				queueStatus = "waiting for more heroes"
+			} else if heroCount >= CFG.MinBotsToStart {
+				queueStatus = "ready to start"
 			} else if !b.autoStartAfter.IsZero() && time.Now().Before(b.autoStartAfter) {
 				queueStatus = "warm-up before start"
 				warmupRemainingMs = b.autoStartAfter.Sub(time.Now()).Milliseconds()
 				if warmupRemainingMs < 0 {
 					warmupRemainingMs = 0
 				}
-			} else {
+			} else if heroCount >= CFG.MinBotsAfterWait {
 				queueStatus = "ready to start"
+			} else {
+				queueStatus = "waiting for more heroes"
 			}
 		}
 		summaries = append(summaries, BoardSummary{

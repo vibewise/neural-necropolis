@@ -92,8 +92,11 @@ type adminSnapshotResponse struct {
 }
 
 type adminSettingsResponse struct {
-	OK       bool              `json:"ok"`
-	Settings game.GameSettings `json:"settings"`
+	OK                bool              `json:"ok"`
+	Error             string            `json:"error"`
+	Message           string            `json:"message"`
+	WarmupRemainingMs int64             `json:"warmupRemainingMs"`
+	Settings          game.GameSettings `json:"settings"`
 }
 
 func newHTTPTestServer() *Server {
@@ -588,6 +591,10 @@ func TestAdminRoutesStartStopAndReset(t *testing.T) {
 func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 	s := newHTTPTestServer()
 	s.gameSettings = game.GameSettings{Paused: true}
+	activeBefore := s.mgr.ActiveBoard()
+	if activeBefore == nil {
+		t.Fatal("expected active board before registrations")
+	}
 
 	registerHTTPTestHero(t, s, "hero-settings-1")
 	registerHTTPTestHero(t, s, "hero-settings-2")
@@ -598,6 +605,9 @@ func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 	}
 	if board.Lifecycle() != game.LifecycleOpen {
 		t.Fatalf("board lifecycle before unpause = %s, want %s", board.Lifecycle(), game.LifecycleOpen)
+	}
+	if deadline := board.AutoStartAfter(); deadline.IsZero() {
+		t.Fatal("expected join window to be armed for underfilled lobby")
 	}
 
 	settingsRec := performRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false}`)
@@ -614,5 +624,50 @@ func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 	}
 	if turnState := s.getTurnState(board); turnState.Started {
 		t.Fatalf("turn state started = %v, want false after unpausing underfilled board", turnState.Started)
+	}
+}
+
+func TestAdminSettingsRejectsUnpauseDuringGlobalWarmup(t *testing.T) {
+	s := newHTTPTestServer()
+	s.gameSettings = game.GameSettings{Paused: true}
+	s.startUnlockAt = time.Now().Add(4 * time.Second)
+
+	settingsRec := performRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false}`)
+	if settingsRec.Code != http.StatusConflict {
+		t.Fatalf("admin settings status = %d, want 409; body=%s", settingsRec.Code, settingsRec.Body.String())
+	}
+	settingsPayload := decodeJSONInto[adminSettingsResponse](t, settingsRec)
+	if settingsPayload.OK || settingsPayload.Error != "warmup_active" {
+		t.Fatalf("admin settings payload = %+v, want warmup_active rejection", settingsPayload)
+	}
+	if settingsPayload.WarmupRemainingMs <= 0 {
+		t.Fatalf("warmup remaining = %d, want positive", settingsPayload.WarmupRemainingMs)
+	}
+	if !settingsPayload.Settings.Paused {
+		t.Fatalf("settings paused = %v, want true after rejected unpause", settingsPayload.Settings.Paused)
+	}
+	if !s.gameSettings.Paused {
+		t.Fatal("server should remain paused during global warmup")
+	}
+}
+
+func TestAdminStartRejectsDuringGlobalWarmup(t *testing.T) {
+	s := newHTTPTestServer()
+	s.startUnlockAt = time.Now().Add(5 * time.Second)
+	board := s.mgr.EnsureOpenBoard()
+	for i := 0; i < game.CFG.MinBotsToStart; i++ {
+		registerHTTPTestHero(t, s, fmt.Sprintf("hero-warmup-start-%d", i))
+	}
+
+	startRec := performRequest(t, s.handleAdminStart, http.MethodPost, "/api/admin/start", "")
+	if startRec.Code != http.StatusConflict {
+		t.Fatalf("admin start status = %d, want 409; body=%s", startRec.Code, startRec.Body.String())
+	}
+	startPayload := decodeJSONInto[adminSnapshotResponse](t, startRec)
+	if startPayload.OK || startPayload.Error != "warmup_active" {
+		t.Fatalf("admin start payload = %+v, want warmup_active rejection", startPayload)
+	}
+	if board.Lifecycle() != game.LifecycleOpen {
+		t.Fatalf("board lifecycle = %s, want %s during warmup", board.Lifecycle(), game.LifecycleOpen)
 	}
 }

@@ -912,6 +912,7 @@
     const required=lobby?.requiredHeroes ?? 0;
     const attached=lobby?.attachedHeroes ?? 0;
     const status=lobby?.status ?? (turnState?.started ? 'running' : 'lobby');
+    const warmupRemaining=warmupRemainingMs(turnState);
     $('attachedBots').textContent=required ? (attached+'/'+required) : String(attached);
     const badge=$('lobbyBadge');
     if(status==='running'){
@@ -926,7 +927,9 @@
     }
     const ready=Boolean(lobby?.canStart);
     badge.className='lobby-badge '+(ready?'ready':'waiting');
-    $('lobbyStatus').textContent=(lobby?.queueStatus||'').length ? lobby.queueStatus : (ready ? 'Board ready' : 'Waiting for queue');
+    $('lobbyStatus').textContent=warmupRemaining>0
+      ? 'Warm-up active'
+      : ((lobby?.queueStatus||'').length ? lobby.queueStatus : (ready ? 'Board ready' : 'Waiting for queue'));
   }
 
   function heroClass(h){return h.status==='dead'?'dead':h.status==='escaped'?'escaped':'';}
@@ -1383,19 +1386,32 @@
     if(!toggle||!label) return;
     var gs=snap.gameSettings||{};
     var on=!gs.paused;
+    var warmupRemaining=warmupRemainingMs(snap.turnState);
     toggle.checked=on;
+    toggle.disabled=warmupRemaining>0;
     label.textContent=on?'Turns ON':'Turns OFF';
-    label.style.color=on?'#60efac':'#8a94af';
+    label.style.color=warmupRemaining>0?'#ffe2a8':(on?'#60efac':'#8a94af');
   }
 
   $('toggleTurns').addEventListener('change',function(){
+    if(lastSnap?.turnState && warmupRemainingMs(lastSnap.turnState)>0){
+      this.checked=false;
+      renderToggle(lastSnap);
+      setControlNotice('Global warm-up is still active. Turns can be enabled after the countdown reaches zero.','warn');
+      return;
+    }
     var wantOn=this.checked;
     var gs=(lastSnap&&lastSnap.gameSettings)||{};
     var body=Object.assign({},gs,{paused:!wantOn});
     fetch('/api/admin/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .then(r=>r.json())
       .then(data=>{
-        if(data.ok && lastSnap){lastSnap.gameSettings=data.settings;renderToggle(lastSnap);}
+        if(data.ok && lastSnap){lastSnap.gameSettings=data.settings;renderToggle(lastSnap);return;}
+        if(!data.ok && lastSnap){
+          lastSnap.gameSettings=data.settings||lastSnap.gameSettings;
+          renderToggle(lastSnap);
+          if(data.message) setControlNotice(String(data.message),'warn');
+        }
       })
       .catch(console.error);
   });

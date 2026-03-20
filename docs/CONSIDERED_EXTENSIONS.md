@@ -48,7 +48,7 @@ Allow users to launch more bot instances than configured slots without immediate
 
 ### Problem
 
-`npm run dev:duel:aibot` launches 10 bot processes (slots A–J). If only A, B, C are configured in `.env`, slots D–J throw a startup error. The current options are: configure all 10 slots, or only launch as many processes as you have slots.
+`npm run run:aibots` launches 10 bot processes (slots A–J). If only A, B, C are configured in `.env`, slots D–J throw a startup error. The current options are: configure all 10 slots, or only launch as many processes as you have slots.
 
 ### Proposed extension
 
@@ -73,4 +73,4 @@ Add a `AIBOT_SLOT_OVERFLOW` setting that controls what happens when a slot is no
 
 ### Recommended direction
 
-Implement `cycle` as the fallback for `dev:duel:aibot` and expose the strategy as `AIBOT_SLOT_OVERFLOW=cycle|clamp|skip|error`. Default to `error` to preserve the explicit-config behavior for production runs.
+Implement `cycle` as the fallback for `run:aibots` and expose the strategy as `AIBOT_SLOT_OVERFLOW=cycle|clamp|skip|error`. Default to `error` to preserve the explicit-config behavior for production runs.

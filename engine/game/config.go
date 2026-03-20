@@ -56,6 +56,8 @@ var CFG = struct {
 
 	MaxBotsPerBoard    int
 	MinBotsToStart     int
+	MinBotsAfterWait   int
+	BoardJoinWindowMs  int
 	PreparedBoardQueue int
 	MaxTurnsPerBoard   int
 }{
@@ -119,6 +121,8 @@ var CFG = struct {
 
 	MaxBotsPerBoard:    4,
 	MinBotsToStart:     4,
+	MinBotsAfterWait:   1,
+	BoardJoinWindowMs:  10000,
 	PreparedBoardQueue: 10,
 	MaxTurnsPerBoard:   20,
 }

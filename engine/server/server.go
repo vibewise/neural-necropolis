@@ -54,7 +54,7 @@ func New() *Server {
 	if actionMs <= 0 {
 		actionMs = 500
 	}
-	warmupMs, _ := strconv.Atoi(envOr("BOARD_WARMUP_MS", "0"))
+	warmupMs, _ := strconv.Atoi(envOr("BOARD_WARMUP_MS", "10000"))
 	maxTurns, _ := strconv.Atoi(envOr("MAX_BOARD_TURNS", strconv.Itoa(game.CFG.MaxTurnsPerBoard)))
 
 	return &Server{
@@ -736,6 +736,18 @@ func (s *Server) handleAdminStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if remaining := s.warmupRemainingMs(time.Now()); remaining > 0 {
+		w.WriteHeader(http.StatusConflict)
+		writeJSON(w, map[string]interface{}{
+			"ok":                false,
+			"error":             "warmup_active",
+			"message":           fmt.Sprintf("Global warm-up active for %.1fs more.", float64(remaining)/1000),
+			"warmupRemainingMs": remaining,
+			"snapshot":          board.Snapshot(s.getTurnState(board)),
+		})
+		return
+	}
+
 	board.SetLifecycle(game.LifecycleRunning)
 	board.SetAutoStartAfter(time.Time{})
 	board.SetCompletionReason("")
@@ -805,6 +817,22 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
+		}
+		if !incoming.Paused {
+			if remaining := s.warmupRemainingMs(time.Now()); remaining > 0 {
+				s.mu.RLock()
+				current := s.gameSettings
+				s.mu.RUnlock()
+				w.WriteHeader(http.StatusConflict)
+				writeJSON(w, map[string]interface{}{
+					"ok":                false,
+					"error":             "warmup_active",
+					"message":           fmt.Sprintf("Turns can be enabled after the global warm-up ends in %.1fs.", float64(remaining)/1000),
+					"warmupRemainingMs": remaining,
+					"settings":          current,
+				})
+				return
+			}
 		}
 		s.mu.Lock()
 		wasPaused := s.gameSettings.Paused

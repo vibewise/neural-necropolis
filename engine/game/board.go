@@ -96,7 +96,48 @@ func (b *Board) AutoStartAfter() time.Time {
 func (b *Board) AutoStartReady(now time.Time) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
+	return b.autoStartReadyLocked(now)
+}
+
+func (b *Board) autoStartReadyLocked(now time.Time) bool {
 	return b.autoStartAfter.IsZero() || !now.Before(b.autoStartAfter)
+}
+
+func (b *Board) canAutoStartLocked(now time.Time) bool {
+	if b.lifecycle != LifecycleOpen {
+		return false
+	}
+	heroCount := len(b.state.Heroes)
+	if heroCount >= CFG.MinBotsToStart {
+		return true
+	}
+	if heroCount < CFG.MinBotsAfterWait {
+		return false
+	}
+	return b.autoStartReadyLocked(now)
+}
+
+func (b *Board) RecalculateAutoStartAfter(now time.Time) (time.Time, bool, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	previous := b.autoStartAfter
+	heroCount := len(b.state.Heroes)
+	switch {
+	case b.lifecycle != LifecycleOpen:
+		b.autoStartAfter = time.Time{}
+	case heroCount == 0:
+		b.autoStartAfter = time.Time{}
+	case heroCount >= CFG.MinBotsToStart:
+		b.autoStartAfter = time.Time{}
+	case heroCount >= CFG.MinBotsAfterWait:
+		if b.autoStartAfter.IsZero() {
+			b.autoStartAfter = now.Add(time.Duration(CFG.BoardJoinWindowMs) * time.Millisecond)
+		}
+	default:
+		b.autoStartAfter = time.Time{}
+	}
+	return b.autoStartAfter, previous.IsZero() && !b.autoStartAfter.IsZero(), !previous.IsZero() && b.autoStartAfter.IsZero()
 }
 
 // queueStatusLocked returns the queue status string and warmup remaining.
@@ -115,15 +156,18 @@ func (b *Board) queueStatusLocked(now time.Time) (string, int64) {
 	if heroCount == 0 {
 		return "waiting for heroes", 0
 	}
-	if heroCount < CFG.MinBotsToStart {
-		return "waiting for more heroes", 0
+	if heroCount >= CFG.MinBotsToStart {
+		return "ready to start", 0
 	}
-	if !b.autoStartAfter.IsZero() && now.Before(b.autoStartAfter) {
+	if heroCount >= CFG.MinBotsAfterWait && !b.autoStartAfter.IsZero() && now.Before(b.autoStartAfter) {
 		remaining := b.autoStartAfter.Sub(now).Milliseconds()
 		if remaining < 0 {
 			remaining = 0
 		}
 		return "warm-up before start", remaining
+	}
+	if heroCount >= CFG.MinBotsAfterWait {
+		return "ready to start", 0
 	}
 	return "ready to start", 0
 }
@@ -225,7 +269,7 @@ func (b *Board) lobbyInfoLocked() LobbyInfo {
 		MaxHeroes:         b.maxHeroes,
 		RequiredHeroes:    &minStart,
 		MinHeroesToStart:  minStart,
-		CanStart:          len(b.state.Heroes) >= minStart && b.lifecycle == LifecycleOpen && warmupRemainingMs == 0,
+		CanStart:          b.canAutoStartLocked(time.Now()),
 		CanReset:          b.lifecycle != LifecycleRunning,
 		QueueStatus:       queueStatus,
 		WarmupRemainingMs: warmupRemainingMs,

@@ -57,19 +57,20 @@ func TestSpecDocMatchesCurrentActionSubmissionRule(t *testing.T) {
 	}
 }
 
-func TestSpecDocIncludesCurrentStartupAndBotLoopGuidance(t *testing.T) {
+func TestSpecDocIncludesCurrentStartupAndBotGuidance(t *testing.T) {
 	doc := readSpecDoc(t)
-	requireSpecContainsAll(t, doc, "startup and bot loop", []string{
-		"npm run dev:duel",
-		"npm run dev:duel:aibot",
-		"npm run dev:all",
+	requireSpecContainsAll(t, doc, "startup and bot guidance", []string{
+		"npm run run:scripted",
+		"npm run run:aibots",
+		"npm run run:openclaw",
+		"npm run run:all",
 		"Then open `http://localhost:3000`.",
 		"1. register a hero",
 		"2. observe the board state",
 		"3. choose one legal action",
 		"4. submit it during the submit window",
 		"5. repeat until the board ends",
-		"- predefined bots: scripted personalities with fixed behavior patterns",
+		"- local scripted bots: deterministic local processes with no model dependency",
 		"- AI bots: model-driven bots that choose among legal actions at runtime",
 	})
 }
