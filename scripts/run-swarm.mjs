@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 
 const DEFAULT_ENGINE_HOST = "127.0.0.1";
+const DEFAULT_DEV_ADMIN_TOKEN =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.neural-necropolis-dev-admin.signature";
+const DEFAULT_SCRIPTED_SUBMIT_WINDOW_MS = 2000;
 
 const MIN_COUNT = 1;
 const MAX_COUNT = 10;
@@ -114,6 +117,89 @@ async function ensureServerReachable(baseUrl) {
       `[agents] server at ${baseUrl} responded with ${response.status}. Start the server separately with npm run run:engine.`,
     );
   }
+}
+
+function resolveAdminToken() {
+  const configured =
+    (process.env.NEURAL_NECROPOLIS_ADMIN_TOKEN ?? "").trim() ||
+    (process.env.NEURAL_NECROPOLIS_AUTH_TOKEN ?? "").trim();
+  return configured || DEFAULT_DEV_ADMIN_TOKEN;
+}
+
+function scriptedSubmitWindowMs() {
+  const raw = (process.env.SCRIPTED_SUBMIT_WINDOW_MS ?? "").trim();
+  if (!raw) {
+    return DEFAULT_SCRIPTED_SUBMIT_WINDOW_MS;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 250) {
+    return DEFAULT_SCRIPTED_SUBMIT_WINDOW_MS;
+  }
+  return parsed;
+}
+
+async function configureScriptedServer(baseUrl) {
+  const adminToken = resolveAdminToken();
+  const desiredSubmitWindowMs = scriptedSubmitWindowMs();
+
+  let settings;
+  try {
+    const response = await fetch(`${baseUrl}/api/admin/settings`, {
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+      },
+    });
+    if (!response.ok) {
+      process.stderr.write(
+        `[run:scripted] unable to read admin settings (${response.status}); leaving server timing unchanged\n`,
+      );
+      return;
+    }
+    settings = await response.json();
+  } catch (error) {
+    process.stderr.write(
+      `[run:scripted] unable to read admin settings: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return;
+  }
+
+  if ((settings.submitWindowMs ?? 0) === desiredSubmitWindowMs) {
+    process.stderr.write(
+      `[run:scripted] submit window already ${desiredSubmitWindowMs}ms\n`,
+    );
+    return;
+  }
+
+  const response = await fetch(`${baseUrl}/api/admin/settings`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      includeLandmarks: Boolean(settings.includeLandmarks),
+      includePlayerPositions: Boolean(settings.includePlayerPositions),
+      paused: Boolean(settings.paused),
+      submitWindowMs: desiredSubmitWindowMs,
+      resolveWindowMs:
+        Number.isFinite(settings.resolveWindowMs) &&
+        settings.resolveWindowMs >= 50
+          ? settings.resolveWindowMs
+          : 500,
+    }),
+  });
+
+  if (!response.ok) {
+    process.stderr.write(
+      `[run:scripted] unable to set submit window to ${desiredSubmitWindowMs}ms (${response.status}); leaving server timing unchanged\n`,
+    );
+    return;
+  }
+
+  process.stderr.write(
+    `[run:scripted] configured submit window to ${desiredSubmitWindowMs}ms\n`,
+  );
 }
 
 function printUsage(mode) {
@@ -233,6 +319,10 @@ async function main() {
   );
 
   await ensureServerReachable(engineTarget.baseUrl);
+
+  if (rawMode === "scripted") {
+    await configureScriptedServer(engineTarget.baseUrl);
+  }
 
   for (const entry of selectedEntries) {
     spawnManagedProcess(children, entry.label, entry.command, entry.env);

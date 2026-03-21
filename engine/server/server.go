@@ -82,6 +82,8 @@ var (
 const defaultDevPlayerAuthToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.neural-necropolis-dev-player.signature"
 const defaultDevAdminAuthToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.neural-necropolis-dev-admin.signature"
 const defaultHeroSessionLeaseMs = 30000
+const minSubmitWindowMs = 250
+const minResolveWindowMs = 50
 
 func New() *Server {
 	port, _ := strconv.Atoi(envOr("PORT", "3000"))
@@ -110,9 +112,13 @@ func New() *Server {
 		phaseEndAt:         time.Now().Add(time.Duration(planningMs) * time.Millisecond),
 		streamClients:      make(map[*sseClient]bool),
 		dashboardHTML:      DashboardHTML,
-		gameSettings:       game.GameSettings{Paused: true},
-		heroSessions:       make(map[string]heroSession),
-		actionCache:        make(map[string]cachedActionResponse),
+		gameSettings: game.GameSettings{
+			Paused:          true,
+			SubmitWindowMs:  planningMs,
+			ResolveWindowMs: actionMs,
+		},
+		heroSessions: make(map[string]heroSession),
+		actionCache:  make(map[string]cachedActionResponse),
 	}
 }
 
@@ -191,12 +197,26 @@ func formatWindowMs(ms int) string {
 	}
 }
 
+func normalizeWindowMs(value int, fallback int, minimum int) int {
+	if value < minimum {
+		return fallback
+	}
+	return value
+}
+
+func (s *Server) currentGameSettingsLocked() game.GameSettings {
+	settings := s.gameSettings
+	settings.SubmitWindowMs = normalizeWindowMs(settings.SubmitWindowMs, s.planningMs, minSubmitWindowMs)
+	settings.ResolveWindowMs = normalizeWindowMs(settings.ResolveWindowMs, s.actionMs, minResolveWindowMs)
+	return settings
+}
+
 func (s *Server) autoStartLoop() {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for range ticker.C {
 		s.mu.RLock()
-		paused := s.gameSettings.Paused
+		paused := s.currentGameSettingsLocked().Paused
 		s.mu.RUnlock()
 		if paused {
 			continue
@@ -316,7 +336,7 @@ func heroSessionLeasePayload(session heroSession) map[string]interface{} {
 
 func (s *Server) tryAutoStartBoard() (*game.Board, bool) {
 	s.mu.RLock()
-	paused := s.gameSettings.Paused
+	paused := s.currentGameSettingsLocked().Paused
 	s.mu.RUnlock()
 	if paused {
 		return nil, false
@@ -454,7 +474,7 @@ func (s *Server) transitionPhase(board *game.Board) {
 
 func (s *Server) broadcastSnapshot(snap game.BoardSnapshot) {
 	s.mu.RLock()
-	settings := s.gameSettings
+	settings := s.currentGameSettingsLocked()
 	s.mu.RUnlock()
 	raw, _ := json.Marshal(snap)
 	var combined map[string]interface{}
@@ -559,7 +579,7 @@ func (s *Server) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := board.Snapshot(s.getTurnState(board))
 	s.mu.RLock()
-	settings := s.gameSettings
+	settings := s.currentGameSettingsLocked()
 	s.mu.RUnlock()
 	// Embed gameSettings into the snapshot JSON by wrapping both into a combined map
 	raw, _ := json.Marshal(snap)
@@ -1063,7 +1083,7 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.mu.RLock()
-		settings := s.gameSettings
+		settings := s.currentGameSettingsLocked()
 		s.mu.RUnlock()
 		writeJSON(w, settings)
 
@@ -1074,20 +1094,37 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mu.Lock()
-		wasPaused := s.gameSettings.Paused
-		s.gameSettings = incoming
+		current := s.currentGameSettingsLocked()
+		wasPaused := current.Paused
+		wasPlanningMs := s.planningMs
+		wasActionMs := s.actionMs
+		phase := s.turnPhase
+		merged := current
+		merged.IncludeLandmarks = incoming.IncludeLandmarks
+		merged.IncludePlayerPositions = incoming.IncludePlayerPositions
+		merged.Paused = incoming.Paused
+		merged.SubmitWindowMs = normalizeWindowMs(incoming.SubmitWindowMs, current.SubmitWindowMs, minSubmitWindowMs)
+		merged.ResolveWindowMs = normalizeWindowMs(incoming.ResolveWindowMs, current.ResolveWindowMs, minResolveWindowMs)
+		timingChanged := merged.SubmitWindowMs != wasPlanningMs || merged.ResolveWindowMs != wasActionMs
+		s.planningMs = merged.SubmitWindowMs
+		s.actionMs = merged.ResolveWindowMs
+		s.gameSettings = merged
 		s.mu.Unlock()
 
-		// If just un-paused, resume the beat loop for the active board
-		if wasPaused && !incoming.Paused {
-			board := s.mgr.ActiveBoard()
-			if board != nil && board.Lifecycle() == game.LifecycleRunning {
+		board := s.mgr.ActiveBoard()
+		if !wasPaused && merged.Paused {
+			s.stopBeatLoop()
+		}
+		if board != nil && board.Lifecycle() == game.LifecycleRunning {
+			if wasPaused && !merged.Paused {
+				s.startBeatLoop(board)
+			} else if timingChanged && !merged.Paused && phase == game.PhaseSubmit {
 				s.startBeatLoop(board)
 			}
 		}
 
-		s.emitLog(fmt.Sprintf("Game settings updated: landmarks=%v, playerPositions=%v, paused=%v", incoming.IncludeLandmarks, incoming.IncludePlayerPositions, incoming.Paused))
-		writeJSON(w, map[string]interface{}{"ok": true, "settings": incoming})
+		s.emitLog(fmt.Sprintf("Game settings updated: landmarks=%v, playerPositions=%v, paused=%v, submit=%s, resolve=%s", merged.IncludeLandmarks, merged.IncludePlayerPositions, merged.Paused, formatWindowMs(merged.SubmitWindowMs), formatWindowMs(merged.ResolveWindowMs)))
+		writeJSON(w, map[string]interface{}{"ok": true, "settings": merged})
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

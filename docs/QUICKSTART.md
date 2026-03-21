@@ -167,6 +167,7 @@ npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:ope
 Behavior notes:
 
 - `run:scripted:agents`, `run:aibots:agents`, and `run:openclaw:agents` require an already running server
+- `run:scripted:agents` tries to set the server submit window to `2000ms` through `/api/admin/settings` before attaching bots; override with `SCRIPTED_SUBMIT_WINDOW_MS`
 - `run:openclaw:agents` still starts or reuses the OpenClaw gateway because that is agent infrastructure, not game-server infrastructure
 - with count `1`, the wrappers use the first roster entry:
 - scripted: first scripted slot

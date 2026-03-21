@@ -545,4 +545,6 @@ type GameSettings struct {
 	IncludeLandmarks       bool `json:"includeLandmarks"`
 	IncludePlayerPositions bool `json:"includePlayerPositions"`
 	Paused                 bool `json:"paused"`
+	SubmitWindowMs         int  `json:"submitWindowMs,omitempty"`
+	ResolveWindowMs        int  `json:"resolveWindowMs,omitempty"`
 }

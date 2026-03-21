@@ -122,17 +122,22 @@ type adminSettingsResponse struct {
 
 func newHTTPTestServer() *Server {
 	return &Server{
-		mgr:                game.NewManager(),
-		playerAuthToken:    defaultDevPlayerAuthToken,
-		adminAuthToken:     defaultDevAdminAuthToken,
-		planningMs:         12000,
-		actionMs:           500,
-		maxTurns:           game.CFG.MaxTurnsPerBoard,
-		turnPhase:          game.PhaseSubmit,
-		phaseStartAt:       time.Now(),
-		phaseEndAt:         time.Now().Add(12 * time.Second),
-		streamClients:      make(map[*sseClient]bool),
-		dashboardHTML:      "<html><body>dashboard</body></html>",
+		mgr:             game.NewManager(),
+		playerAuthToken: defaultDevPlayerAuthToken,
+		adminAuthToken:  defaultDevAdminAuthToken,
+		planningMs:      12000,
+		actionMs:        500,
+		maxTurns:        game.CFG.MaxTurnsPerBoard,
+		turnPhase:       game.PhaseSubmit,
+		phaseStartAt:    time.Now(),
+		phaseEndAt:      time.Now().Add(12 * time.Second),
+		streamClients:   make(map[*sseClient]bool),
+		dashboardHTML:   "<html><body>dashboard</body></html>",
+		gameSettings: game.GameSettings{
+			Paused:          false,
+			SubmitWindowMs:  12000,
+			ResolveWindowMs: 500,
+		},
 		heroSessionLeaseMs: defaultHeroSessionLeaseMs,
 		heroSessions:       make(map[string]heroSession),
 		actionCache:        make(map[string]cachedActionResponse),
@@ -944,7 +949,7 @@ func TestAdminRoutesStartStopAndReset(t *testing.T) {
 
 func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 	s := newHTTPTestServer()
-	s.gameSettings = game.GameSettings{Paused: true}
+	s.gameSettings = game.GameSettings{Paused: true, SubmitWindowMs: 12000, ResolveWindowMs: 500}
 	activeBefore := s.mgr.ActiveBoard()
 	if activeBefore == nil {
 		t.Fatal("expected active board before registrations")
@@ -964,7 +969,7 @@ func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 		t.Fatal("expected join window to be armed for underfilled lobby")
 	}
 
-	settingsRec := performAdminRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false}`)
+	settingsRec := performAdminRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false,"submitWindowMs":12000,"resolveWindowMs":500}`)
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("admin settings status = %d, want 200; body=%s", settingsRec.Code, settingsRec.Body.String())
 	}
@@ -983,7 +988,7 @@ func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 
 func TestAdminStartRejectsWhilePaused(t *testing.T) {
 	s := newHTTPTestServer()
-	s.gameSettings = game.GameSettings{Paused: true}
+	s.gameSettings = game.GameSettings{Paused: true, SubmitWindowMs: 12000, ResolveWindowMs: 500}
 	board := s.mgr.EnsureOpenBoard()
 	for i := 0; i < game.CFG.MinBotsToStart; i++ {
 		registerHTTPTestHero(t, s, fmt.Sprintf("hero-paused-start-%d", i))
@@ -999,5 +1004,43 @@ func TestAdminStartRejectsWhilePaused(t *testing.T) {
 	}
 	if board.Lifecycle() != game.LifecycleOpen {
 		t.Fatalf("board lifecycle = %s, want %s while paused", board.Lifecycle(), game.LifecycleOpen)
+	}
+}
+
+func TestAdminSettingsUpdatesTurnWindowsAndPreservesTimingInResponse(t *testing.T) {
+	s := newHTTPTestServer()
+	s.gameSettings = game.GameSettings{
+		Paused:                 false,
+		IncludeLandmarks:       true,
+		IncludePlayerPositions: true,
+		SubmitWindowMs:         12000,
+		ResolveWindowMs:        500,
+	}
+
+	settingsRec := performAdminRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":true,"submitWindowMs":2000,"resolveWindowMs":250}`)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("admin timing settings status = %d, want 200; body=%s", settingsRec.Code, settingsRec.Body.String())
+	}
+	settingsPayload := decodeJSONInto[adminSettingsResponse](t, settingsRec)
+	if !settingsPayload.OK {
+		t.Fatalf("admin timing settings payload = %+v, want ok=true", settingsPayload)
+	}
+	if settingsPayload.Settings.SubmitWindowMs != 2000 || settingsPayload.Settings.ResolveWindowMs != 250 {
+		t.Fatalf("admin timing settings = %+v, want submit=2000 resolve=250", settingsPayload.Settings)
+	}
+	if s.planningMs != 2000 || s.actionMs != 250 {
+		t.Fatalf("server timing = submit %d resolve %d, want 2000 and 250", s.planningMs, s.actionMs)
+	}
+
+	healthRec := performRequest(t, s.handleHealth, http.MethodGet, "/api/health", "")
+	healthPayload := decodeJSONInto[healthResponse](t, healthRec)
+	if healthPayload.TurnState.SubmitWindowMs != 2000 || healthPayload.TurnState.ResolveWindowMs != 250 {
+		t.Fatalf("health turn state = %+v, want submit=2000 resolve=250", healthPayload.TurnState)
+	}
+
+	getRec := performAdminRequest(t, s.handleAdminSettings, http.MethodGet, "/api/admin/settings", "")
+	getPayload := decodeJSONInto[game.GameSettings](t, getRec)
+	if getPayload.SubmitWindowMs != 2000 || getPayload.ResolveWindowMs != 250 {
+		t.Fatalf("admin settings get payload = %+v, want submit=2000 resolve=250", getPayload)
 	}
 }
