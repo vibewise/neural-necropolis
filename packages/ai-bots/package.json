@@ -1,0 +1,18 @@
+{
+  "name": "@neural-necropolis/ai-bots",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-backed Neural Necropolis AI bot runtime packaged as an isolated client application.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "run:bot": "tsx watch src/aibot.ts"
+  },
+  "dependencies": {
+    "@neural-necropolis/agent-sdk": "*",
+    "@neural-necropolis/protocol-ts": "*",
+    "dotenv": "^16.4.7",
+    "openai": "^6.31.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@neural-necropolis/protocol-ts",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared Neural Necropolis TypeScript protocol types and config constants.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  }
+}

@@ -121,6 +121,10 @@ func (b *Board) RecalculateAutoStartAfter(now time.Time) (time.Time, bool, bool)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	return b.recalculateAutoStartAfterLocked(now)
+}
+
+func (b *Board) recalculateAutoStartAfterLocked(now time.Time) (time.Time, bool, bool) {
 	previous := b.autoStartAfter
 	heroCount := len(b.state.Heroes)
 	switch {
@@ -140,7 +144,7 @@ func (b *Board) RecalculateAutoStartAfter(now time.Time) (time.Time, bool, bool)
 	return b.autoStartAfter, previous.IsZero() && !b.autoStartAfter.IsZero(), !previous.IsZero() && b.autoStartAfter.IsZero()
 }
 
-// queueStatusLocked returns the queue status string and warmup remaining.
+// queueStatusLocked returns the queue status string and join-window remaining.
 // Caller must hold b.mu (read or write).
 func (b *Board) queueStatusLocked(now time.Time) (string, int64) {
 	switch b.lifecycle {
@@ -164,7 +168,7 @@ func (b *Board) queueStatusLocked(now time.Time) (string, int64) {
 		if remaining < 0 {
 			remaining = 0
 		}
-		return "warm-up before start", remaining
+		return "waiting for more heroes", remaining
 	}
 	if heroCount >= CFG.MinBotsAfterWait {
 		return "ready to start", 0
@@ -260,22 +264,22 @@ func (b *Board) Snapshot(turnState TurnState) BoardSnapshot {
 // Caller must hold b.mu (read or write).
 func (b *Board) lobbyInfoLocked() LobbyInfo {
 	minStart := CFG.MinBotsToStart
-	queueStatus, warmupRemainingMs := b.queueStatusLocked(time.Now())
+	queueStatus, joinWindowRemainingMs := b.queueStatusLocked(time.Now())
 	return LobbyInfo{
-		BoardID:           b.ID,
-		BoardSlug:         MakeBoardSlug(b.state.DungeonName, b.ID),
-		BoardName:         b.state.DungeonName,
-		AttachedHeroes:    len(b.state.Heroes),
-		MaxHeroes:         b.maxHeroes,
-		RequiredHeroes:    &minStart,
-		MinHeroesToStart:  minStart,
-		CanStart:          b.canAutoStartLocked(time.Now()),
-		CanReset:          b.lifecycle != LifecycleRunning,
-		QueueStatus:       queueStatus,
-		WarmupRemainingMs: warmupRemainingMs,
-		Status:            b.lifecycle,
-		Started:           b.lifecycle == LifecycleRunning,
-		CompletionReason:  b.completionReason,
+		BoardID:               b.ID,
+		BoardSlug:             MakeBoardSlug(b.state.DungeonName, b.ID),
+		BoardName:             b.state.DungeonName,
+		AttachedHeroes:        len(b.state.Heroes),
+		MaxHeroes:             b.maxHeroes,
+		RequiredHeroes:        &minStart,
+		MinHeroesToStart:      minStart,
+		CanStart:              b.canAutoStartLocked(time.Now()),
+		CanReset:              b.lifecycle != LifecycleRunning,
+		QueueStatus:           queueStatus,
+		JoinWindowRemainingMs: joinWindowRemainingMs,
+		Status:                b.lifecycle,
+		Started:               b.lifecycle == LifecycleRunning,
+		CompletionReason:      b.completionReason,
 	}
 }
 
@@ -415,6 +419,70 @@ func (b *Board) RegisterHero(input HeroRegistration) (*HeroProfile, error) {
 	}
 
 	return &b.state.Heroes[len(b.state.Heroes)-1], nil
+}
+
+// RemoveHeroIfOpen removes a hero from an open board before it has started.
+func (b *Board) RemoveHeroIfOpen(heroID string, now time.Time) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.lifecycle != LifecycleOpen {
+		return "", false
+	}
+
+	for i := range b.state.Heroes {
+		if b.state.Heroes[i].ID != heroID {
+			continue
+		}
+		heroName := b.state.Heroes[i].Name
+		b.state.Heroes = append(b.state.Heroes[:i], b.state.Heroes[i+1:]...)
+		delete(b.state.PendingActions, EntityID(heroID))
+
+		quests := b.state.Quests[:0]
+		for _, quest := range b.state.Quests {
+			if quest.HeroID == EntityID(heroID) {
+				continue
+			}
+			quests = append(quests, quest)
+		}
+		b.state.Quests = quests
+
+		messages := b.botMessages[:0]
+		for _, message := range b.botMessages {
+			if message.HeroID == EntityID(heroID) {
+				continue
+			}
+			messages = append(messages, message)
+		}
+		b.botMessages = messages
+
+		b.recalculateAutoStartAfterLocked(now)
+		return heroName, true
+	}
+
+	return "", false
+}
+
+// MarkHeroDisconnected annotates a living hero so spectators can see the session was lost.
+func (b *Board) MarkHeroDisconnected(heroID string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i := range b.state.Heroes {
+		if b.state.Heroes[i].ID != heroID {
+			continue
+		}
+		hero := &b.state.Heroes[i]
+		if hero.LastAction == "session expired" {
+			return hero.Name, false
+		}
+		if hero.Status == StatusAlive {
+			hero.LastAction = "session expired"
+		}
+		return hero.Name, true
+	}
+
+	return "", false
 }
 
 func (b *Board) pickRandomSpawnPosition() Position {

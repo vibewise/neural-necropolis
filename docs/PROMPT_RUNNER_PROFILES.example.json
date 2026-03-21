@@ -1,0 +1,18 @@
+{
+  "balanced-production": {
+    "provider": "openai",
+    "model": "gpt-4.1-mini",
+    "apiKeyEnv": "OPENAI_API_KEY"
+  },
+  "cheap-groq": {
+    "provider": "groq",
+    "model": "llama-3.3-70b-versatile",
+    "apiKeyEnv": "GROQ_API_KEY"
+  },
+  "local-ollama": {
+    "provider": "ollama",
+    "model": "qwen2.5:7b-instruct",
+    "baseUrl": "http://127.0.0.1:11434/v1",
+    "includeReasoning": false
+  }
+}

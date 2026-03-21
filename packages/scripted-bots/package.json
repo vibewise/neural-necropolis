@@ -1,0 +1,19 @@
+{
+  "name": "@neural-necropolis/scripted-bots",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Scripted Neural Necropolis hero bots packaged as an isolated client runtime.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "run:berserker": "tsx watch src/berserker.ts",
+    "run:explorer": "tsx watch src/explorer.ts",
+    "run:treasure-hunter": "tsx watch src/treasure-hunter.ts"
+  },
+  "dependencies": {
+    "@neural-necropolis/agent-sdk": "*",
+    "@neural-necropolis/protocol-ts": "*",
+    "dotenv": "^16.4.7"
+  }
+}

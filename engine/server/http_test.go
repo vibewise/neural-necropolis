@@ -15,14 +15,19 @@ import (
 )
 
 type registerResponse struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Trait     game.HeroTrait `json:"trait"`
-	Strategy  string         `json:"strategy"`
-	Stats     game.HeroStats `json:"stats"`
-	Position  game.Position  `json:"position"`
-	BoardID   string         `json:"boardId"`
-	TurnState game.TurnState `json:"turnState"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Trait          game.HeroTrait `json:"trait"`
+	Strategy       string         `json:"strategy"`
+	Stats          game.HeroStats `json:"stats"`
+	Position       game.Position  `json:"position"`
+	BoardID        string         `json:"boardId"`
+	SessionToken   string         `json:"sessionToken"`
+	LeaseExpiresAt int64          `json:"leaseExpiresAt"`
+	LeaseTTLms     int64          `json:"leaseTtlMs"`
+	SessionStatus  string         `json:"sessionStatus"`
+	RequestID      string         `json:"requestId"`
+	TurnState      game.TurnState `json:"turnState"`
 }
 
 type observeResponse struct {
@@ -38,18 +43,35 @@ type observeResponse struct {
 	VisibleItems    []game.FloorItem    `json:"visibleItems"`
 	RecentEvents    []game.EventRecord  `json:"recentEvents"`
 	LegalActions    []game.LegalAction  `json:"legalActions"`
+	LeaseExpiresAt  int64               `json:"leaseExpiresAt"`
+	LeaseTTLms      int64               `json:"leaseTtlMs"`
+	SessionStatus   string              `json:"sessionStatus"`
+	RequestID       string              `json:"requestId"`
 	TurnState       game.TurnState      `json:"turnState"`
+}
+
+type heartbeatResponse struct {
+	OK             bool           `json:"ok"`
+	BoardID        string         `json:"boardId"`
+	LeaseExpiresAt int64          `json:"leaseExpiresAt"`
+	LeaseTTLms     int64          `json:"leaseTtlMs"`
+	SessionStatus  string         `json:"sessionStatus"`
+	RequestID      string         `json:"requestId"`
+	TurnState      game.TurnState `json:"turnState"`
 }
 
 type actionResponse struct {
 	Accepted  bool           `json:"accepted"`
 	Message   string         `json:"message"`
 	Error     string         `json:"error"`
+	RequestID string         `json:"requestId"`
+	Replayed  bool           `json:"replayed"`
 	TurnState game.TurnState `json:"turnState"`
 }
 
 type logResponse struct {
-	OK bool `json:"ok"`
+	OK        bool   `json:"ok"`
+	RequestID string `json:"requestId"`
 }
 
 type healthResponse struct {
@@ -92,29 +114,82 @@ type adminSnapshotResponse struct {
 }
 
 type adminSettingsResponse struct {
-	OK                bool              `json:"ok"`
-	Error             string            `json:"error"`
-	Message           string            `json:"message"`
-	WarmupRemainingMs int64             `json:"warmupRemainingMs"`
-	Settings          game.GameSettings `json:"settings"`
+	OK       bool              `json:"ok"`
+	Error    string            `json:"error"`
+	Message  string            `json:"message"`
+	Settings game.GameSettings `json:"settings"`
 }
 
 func newHTTPTestServer() *Server {
 	return &Server{
-		mgr:           game.NewManager(),
-		planningMs:    12000,
-		actionMs:      500,
-		warmupMs:      0,
-		maxTurns:      game.CFG.MaxTurnsPerBoard,
-		turnPhase:     game.PhaseSubmit,
-		phaseStartAt:  time.Now(),
-		phaseEndAt:    time.Now().Add(12 * time.Second),
-		streamClients: make(map[*sseClient]bool),
-		dashboardHTML: "<html><body>dashboard</body></html>",
+		mgr:                game.NewManager(),
+		playerAuthToken:    defaultDevPlayerAuthToken,
+		adminAuthToken:     defaultDevAdminAuthToken,
+		planningMs:         12000,
+		actionMs:           500,
+		maxTurns:           game.CFG.MaxTurnsPerBoard,
+		turnPhase:          game.PhaseSubmit,
+		phaseStartAt:       time.Now(),
+		phaseEndAt:         time.Now().Add(12 * time.Second),
+		streamClients:      make(map[*sseClient]bool),
+		dashboardHTML:      "<html><body>dashboard</body></html>",
+		heroSessionLeaseMs: defaultHeroSessionLeaseMs,
+		heroSessions:       make(map[string]heroSession),
+		actionCache:        make(map[string]cachedActionResponse),
 	}
 }
 
+func setHeroSessionExpiry(t *testing.T, s *Server, heroID string, expiry time.Time) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.heroSessions[heroID]
+	if !ok {
+		t.Fatalf("missing hero session for %s", heroID)
+	}
+	session.LeaseExpiresAt = expiry
+	s.heroSessions[heroID] = session
+}
+
+func performPlayerRequest(t *testing.T, handler http.HandlerFunc, method string, target string, body string, sessionToken string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+defaultDevPlayerAuthToken)
+	if sessionToken != "" {
+		req.Header.Set("X-Hero-Session-Token", sessionToken)
+	}
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	return rec
+}
+
 func performRequest(t *testing.T, handler http.HandlerFunc, method string, target string, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	return rec
+}
+
+func performAdminRequest(t *testing.T, handler http.HandlerFunc, method string, target string, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+defaultDevAdminAuthToken)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	return rec
+}
+
+func performRequestWithoutAuth(t *testing.T, handler http.HandlerFunc, method string, target string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, target, bytes.NewBufferString(body))
 	if body != "" {
@@ -143,10 +218,63 @@ func decodeJSONInto[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 	return payload
 }
 
+func TestCORSPreflightAllowsCrossOriginDashboardClients(t *testing.T) {
+	handler := withCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/admin/settings", nil)
+	req.Header.Set("Origin", "https://dashboard.example")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type, X-Hero-Session-Token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("allow origin = %q, want *", got)
+	}
+	allowHeaders := rec.Header().Get("Access-Control-Allow-Headers")
+	for _, required := range []string{"Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Hero-Session-Token", "X-Request-Id"} {
+		if !strings.Contains(allowHeaders, required) {
+			t.Fatalf("allow headers %q missing %q", allowHeaders, required)
+		}
+	}
+	if got := rec.Header().Get("Access-Control-Max-Age"); got != "600" {
+		t.Fatalf("max age = %q, want 600", got)
+	}
+}
+
+func TestCORSExposesRequestIDHeaderToBrowserClients(t *testing.T) {
+	handler := withCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-browser")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	req.Header.Set("Origin", "https://dashboard.example")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "X-Request-Id") {
+		t.Fatalf("exposed headers = %q, want X-Request-Id", got)
+	}
+	if got := rec.Header().Get("X-Request-Id"); got != "req-browser" {
+		t.Fatalf("request id header = %q, want req-browser", got)
+	}
+}
+
 func registerHTTPTestHero(t *testing.T, s *Server, id string) map[string]interface{} {
 	t.Helper()
 	body := fmt.Sprintf(`{"id":"%s","name":"%s","strategy":"test strategy","preferredTrait":"curious"}`, id, strings.ToUpper(id[:1])+id[1:])
-	rec := performRequest(t, s.handleRegister, http.MethodPost, "/api/heroes/register", body)
+	rec := performPlayerRequest(t, s.handleRegister, http.MethodPost, "/api/heroes/register", body, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("register hero status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -168,8 +296,24 @@ func TestPublicAPIRegisterObserveActAndLogRoutes(t *testing.T) {
 	if _, ok := reg["turnState"].(map[string]interface{}); !ok {
 		t.Fatalf("register response missing turnState object: %T", reg["turnState"])
 	}
+	sessionToken, _ := reg["sessionToken"].(string)
+	if sessionToken == "" {
+		t.Fatal("register response missing sessionToken")
+	}
+	if reg["requestId"] == "" {
+		t.Fatal("register response missing requestId")
+	}
+	if leaseTTL, ok := reg["leaseTtlMs"].(float64); !ok || leaseTTL <= 0 {
+		t.Fatalf("register response missing leaseTtlMs: %v", reg["leaseTtlMs"])
+	}
+	if leaseExpiry, ok := reg["leaseExpiresAt"].(float64); !ok || leaseExpiry <= 0 {
+		t.Fatalf("register response missing leaseExpiresAt: %v", reg["leaseExpiresAt"])
+	}
+	if reg["sessionStatus"] != string(heroSessionActive) {
+		t.Fatalf("register sessionStatus = %v, want %s", reg["sessionStatus"], heroSessionActive)
+	}
 
-	observe := performRequest(t, s.handleHeroRoutes, http.MethodGet, "/api/heroes/hero-http/observe", "")
+	observe := performPlayerRequest(t, s.handleHeroRoutes, http.MethodGet, "/api/heroes/hero-http/observe", "", sessionToken)
 	if observe.Code != http.StatusOK {
 		t.Fatalf("observe status = %d, want 200; body=%s", observe.Code, observe.Body.String())
 	}
@@ -179,8 +323,11 @@ func TestPublicAPIRegisterObserveActAndLogRoutes(t *testing.T) {
 			t.Fatalf("observe response missing key %q", key)
 		}
 	}
+	if observePayload["sessionStatus"] != string(heroSessionActive) {
+		t.Fatalf("observe sessionStatus = %v, want %s", observePayload["sessionStatus"], heroSessionActive)
+	}
 
-	act := performRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/act", `{"kind":"wait"}`)
+	act := performPlayerRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/act", `{"kind":"wait"}`, sessionToken)
 	if act.Code != http.StatusOK {
 		t.Fatalf("act status = %d, want 200; body=%s", act.Code, act.Body.String())
 	}
@@ -189,7 +336,7 @@ func TestPublicAPIRegisterObserveActAndLogRoutes(t *testing.T) {
 		t.Fatalf("act accepted = %v, want true", actPayload["accepted"])
 	}
 
-	rejected := performRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/act", `{"kind":"wait"}`)
+	rejected := performPlayerRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/act", `{"kind":"wait"}`, sessionToken)
 	if rejected.Code != http.StatusOK {
 		t.Fatalf("duplicate act status = %d, want 200; body=%s", rejected.Code, rejected.Body.String())
 	}
@@ -202,7 +349,7 @@ func TestPublicAPIRegisterObserveActAndLogRoutes(t *testing.T) {
 		t.Fatalf("duplicate act message = %q, want queue rejection", message)
 	}
 
-	logResp := performRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/log", `{"message":"moving north next turn"}`)
+	logResp := performPlayerRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/log", `{"message":"moving north next turn"}`, sessionToken)
 	if logResp.Code != http.StatusOK {
 		t.Fatalf("log status = %d, want 200; body=%s", logResp.Code, logResp.Body.String())
 	}
@@ -211,9 +358,91 @@ func TestPublicAPIRegisterObserveActAndLogRoutes(t *testing.T) {
 		t.Fatalf("log ok = %v, want true", logPayload["ok"])
 	}
 
-	badLog := performRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/log", `{"message":"   "}`)
+	badLog := performPlayerRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-http/log", `{"message":"   "}`, sessionToken)
 	if badLog.Code != http.StatusBadRequest {
 		t.Fatalf("blank log status = %d, want 400; body=%s", badLog.Code, badLog.Body.String())
+	}
+}
+
+func TestHeroHeartbeatRenewsLease(t *testing.T) {
+	s := newHTTPTestServer()
+	reg := registerHTTPTestHero(t, s, "hero-heartbeat")
+	sessionToken, _ := reg["sessionToken"].(string)
+	oldExpiry := time.Now().Add(10 * time.Millisecond)
+	setHeroSessionExpiry(t, s, "hero-heartbeat", oldExpiry)
+
+	rec := performPlayerRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-heartbeat/heartbeat", "", sessionToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeat status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	payload := decodeJSONInto[heartbeatResponse](t, rec)
+	if !payload.OK {
+		t.Fatalf("heartbeat ok = %v, want true", payload.OK)
+	}
+	if payload.BoardID == "" || payload.RequestID == "" {
+		t.Fatalf("heartbeat payload missing boardId/requestId: %+v", payload)
+	}
+	if payload.SessionStatus != string(heroSessionActive) {
+		t.Fatalf("heartbeat sessionStatus = %s, want %s", payload.SessionStatus, heroSessionActive)
+	}
+	if payload.LeaseTTLms <= 0 || payload.LeaseExpiresAt <= oldExpiry.UnixMilli() {
+		t.Fatalf("heartbeat lease not renewed: %+v old=%d", payload, oldExpiry.UnixMilli())
+	}
+}
+
+func TestExpiredOpenBoardSessionEvictsHeroAndAllowsReregister(t *testing.T) {
+	s := newHTTPTestServer()
+	reg := registerHTTPTestHero(t, s, "hero-open-expired")
+	oldSessionToken, _ := reg["sessionToken"].(string)
+	setHeroSessionExpiry(t, s, "hero-open-expired", time.Now().Add(-time.Second))
+	s.expireHeroSessions(time.Now())
+
+	if board := s.mgr.FindBoardForHero("hero-open-expired"); board != nil {
+		t.Fatalf("expected expired open-board hero to be removed, still found on board %s", board.ID)
+	}
+
+	observe := performPlayerRequest(t, s.handleHeroRoutes, http.MethodGet, "/api/heroes/hero-open-expired/observe", "", oldSessionToken)
+	if observe.Code != http.StatusNotFound {
+		t.Fatalf("observe after open-board expiry status = %d, want 404; body=%s", observe.Code, observe.Body.String())
+	}
+
+	reregister := registerHTTPTestHero(t, s, "hero-open-expired")
+	newSessionToken, _ := reregister["sessionToken"].(string)
+	if newSessionToken == "" || newSessionToken == oldSessionToken {
+		t.Fatalf("re-register session token = %q, want a fresh token distinct from %q", newSessionToken, oldSessionToken)
+	}
+	if board := s.mgr.FindBoardForHero("hero-open-expired"); board == nil {
+		t.Fatal("expected hero to rejoin an open board after expiry")
+	}
+}
+
+func TestExpiredRunningBoardSessionRejectsRequestsAndMarksHeroInactive(t *testing.T) {
+	s := newHTTPTestServer()
+	reg := registerHTTPTestHero(t, s, "hero-running-expired")
+	sessionToken, _ := reg["sessionToken"].(string)
+	board := s.mgr.FindBoardForHero("hero-running-expired")
+	if board == nil {
+		t.Fatal("expected running-board test hero to be registered")
+	}
+	board.SetLifecycle(game.LifecycleRunning)
+	setHeroSessionExpiry(t, s, "hero-running-expired", time.Now().Add(-time.Second))
+	s.expireHeroSessions(time.Now())
+
+	rec := performPlayerRequest(t, s.handleHeroRoutes, http.MethodGet, "/api/heroes/hero-running-expired/observe", "", sessionToken)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("observe after running-board expiry status = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	payload := decodeJSONMap(t, rec)
+	if payload["error"] != "expired_session" {
+		t.Fatalf("expired running-board error = %v, want expired_session", payload["error"])
+	}
+
+	snap := board.Snapshot(s.getTurnState(board))
+	if len(snap.Heroes) != 1 {
+		t.Fatalf("running-board snapshot hero count = %d, want 1", len(snap.Heroes))
+	}
+	if snap.Heroes[0].LastAction != "session expired" {
+		t.Fatalf("running-board hero lastAction = %q, want session expired", snap.Heroes[0].LastAction)
 	}
 }
 
@@ -242,10 +471,11 @@ func TestRegisterRouteDoesNotAutoStartBoardWhilePaused(t *testing.T) {
 
 func TestPublicAPIActRouteRejectsWrongPhase(t *testing.T) {
 	s := newHTTPTestServer()
-	registerHTTPTestHero(t, s, "hero-phase")
+	reg := registerHTTPTestHero(t, s, "hero-phase")
 	s.turnPhase = game.PhaseResolve
 
-	rec := performRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-phase/act", `{"kind":"wait"}`)
+	sessionToken, _ := reg["sessionToken"].(string)
+	rec := performPlayerRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-phase/act", `{"kind":"wait"}`, sessionToken)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("wrong-phase act status = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
@@ -256,6 +486,112 @@ func TestPublicAPIActRouteRejectsWrongPhase(t *testing.T) {
 	message, _ := payload["message"].(string)
 	if !strings.Contains(message, string(game.PhaseResolve)) {
 		t.Fatalf("wrong-phase message = %q, want current phase", message)
+	}
+}
+
+func TestProtectedRoutesRequireBearerToken(t *testing.T) {
+	s := newHTTPTestServer()
+
+	register := performRequestWithoutAuth(t, s.handleRegister, http.MethodPost, "/api/heroes/register", `{"id":"hero-auth","name":"HeroAuth","strategy":"test strategy"}`)
+	if register.Code != http.StatusUnauthorized {
+		t.Fatalf("register without auth status = %d, want 401; body=%s", register.Code, register.Body.String())
+	}
+	registerPayload := decodeJSONMap(t, register)
+	if registerPayload["error"] != "missing_auth" {
+		t.Fatalf("register without auth error = %v, want missing_auth", registerPayload["error"])
+	}
+
+	reg := registerHTTPTestHero(t, s, "hero-auth-ok")
+	sessionToken, _ := reg["sessionToken"].(string)
+	observe := performRequestWithoutAuth(t, s.handleHeroRoutes, http.MethodGet, "/api/heroes/hero-auth-ok/observe", "")
+	if observe.Code != http.StatusUnauthorized {
+		t.Fatalf("observe without auth status = %d, want 401; body=%s", observe.Code, observe.Body.String())
+	}
+
+	reqMissingSession := httptest.NewRequest(http.MethodGet, "/api/heroes/hero-auth-ok/observe", bytes.NewBufferString(""))
+	reqMissingSession.Header.Set("Authorization", "Bearer "+defaultDevPlayerAuthToken)
+	recMissingSession := httptest.NewRecorder()
+	s.handleHeroRoutes(recMissingSession, reqMissingSession)
+	if recMissingSession.Code != http.StatusUnauthorized {
+		t.Fatalf("observe without session token status = %d, want 401; body=%s", recMissingSession.Code, recMissingSession.Body.String())
+	}
+	missingSessionPayload := decodeJSONMap(t, recMissingSession)
+	if missingSessionPayload["error"] != "missing_session" {
+		t.Fatalf("observe without session error = %v, want missing_session", missingSessionPayload["error"])
+	}
+
+	reqWrongSession := httptest.NewRequest(http.MethodGet, "/api/heroes/hero-auth-ok/observe", bytes.NewBufferString(""))
+	reqWrongSession.Header.Set("Authorization", "Bearer "+defaultDevPlayerAuthToken)
+	reqWrongSession.Header.Set("X-Hero-Session-Token", sessionToken+"-wrong")
+	recWrongSession := httptest.NewRecorder()
+	s.handleHeroRoutes(recWrongSession, reqWrongSession)
+	if recWrongSession.Code != http.StatusUnauthorized {
+		t.Fatalf("observe with wrong session token status = %d, want 401; body=%s", recWrongSession.Code, recWrongSession.Body.String())
+	}
+
+	admin := performRequestWithoutAuth(t, s.handleAdminStart, http.MethodPost, "/api/admin/start", "")
+	if admin.Code != http.StatusUnauthorized {
+		t.Fatalf("admin start without auth status = %d, want 401; body=%s", admin.Code, admin.Body.String())
+	}
+	adminPayload := decodeJSONMap(t, admin)
+	if adminPayload["error"] != "missing_auth" {
+		t.Fatalf("admin start without auth error = %v, want missing_auth", adminPayload["error"])
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/start", bytes.NewBufferString(""))
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminStart(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("admin start with wrong auth status = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	wrongPayload := decodeJSONMap(t, rec)
+	if wrongPayload["error"] != "invalid_auth" {
+		t.Fatalf("admin start with wrong auth error = %v, want invalid_auth", wrongPayload["error"])
+	}
+
+	wrongPlayerReq := httptest.NewRequest(http.MethodPost, "/api/admin/start", bytes.NewBufferString(""))
+	wrongPlayerReq.Header.Set("Authorization", "Bearer "+defaultDevPlayerAuthToken)
+	wrongPlayerRec := httptest.NewRecorder()
+	s.handleAdminStart(wrongPlayerRec, wrongPlayerReq)
+	if wrongPlayerRec.Code != http.StatusUnauthorized {
+		t.Fatalf("admin start with player token status = %d, want 401; body=%s", wrongPlayerRec.Code, wrongPlayerRec.Body.String())
+	}
+}
+
+func TestActRouteReplaysCachedResponseForMatchingIdempotencyKey(t *testing.T) {
+	s := newHTTPTestServer()
+	reg := registerHTTPTestHero(t, s, "hero-idempotent")
+	sessionToken, _ := reg["sessionToken"].(string)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/heroes/hero-idempotent/act", bytes.NewBufferString(`{"kind":"wait"}`))
+	request.Header.Set("Authorization", "Bearer "+defaultDevPlayerAuthToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Hero-Session-Token", sessionToken)
+	request.Header.Set("Idempotency-Key", "test-key")
+	first := httptest.NewRecorder()
+	s.handleHeroRoutes(first, request)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first idempotent act status = %d, want 200; body=%s", first.Code, first.Body.String())
+	}
+	firstPayload := decodeJSONMap(t, first)
+	if replayed, _ := firstPayload["replayed"].(bool); replayed {
+		t.Fatal("first idempotent act should not be marked replayed")
+	}
+
+	retry := httptest.NewRequest(http.MethodPost, "/api/heroes/hero-idempotent/act", bytes.NewBufferString(`{"kind":"wait"}`))
+	retry.Header.Set("Authorization", "Bearer "+defaultDevPlayerAuthToken)
+	retry.Header.Set("Content-Type", "application/json")
+	retry.Header.Set("X-Hero-Session-Token", sessionToken)
+	retry.Header.Set("Idempotency-Key", "test-key")
+	second := httptest.NewRecorder()
+	s.handleHeroRoutes(second, retry)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second idempotent act status = %d, want 200; body=%s", second.Code, second.Body.String())
+	}
+	secondPayload := decodeJSONMap(t, second)
+	if replayed, _ := secondPayload["replayed"].(bool); !replayed {
+		t.Fatalf("second idempotent act replayed = %v, want true", secondPayload["replayed"])
 	}
 }
 
@@ -409,11 +745,14 @@ func TestPublicAPIStreamRouteEmitsSnapshotEvent(t *testing.T) {
 	if !strings.Contains(body, `"boardId"`) {
 		t.Fatalf("stream body missing snapshot payload: %q", body)
 	}
+	if !strings.Contains(body, `"gameSettings"`) {
+		t.Fatalf("stream body missing gameSettings payload: %q", body)
+	}
 }
 
 func TestPublicAPITypedResponsesMatchCurrentContracts(t *testing.T) {
 	s := newHTTPTestServer()
-	registerRec := performRequest(t, s.handleRegister, http.MethodPost, "/api/heroes/register", `{"id":"hero-typed","name":"HeroTyped","strategy":"test strategy","preferredTrait":"cautious"}`)
+	registerRec := performPlayerRequest(t, s.handleRegister, http.MethodPost, "/api/heroes/register", `{"id":"hero-typed","name":"HeroTyped","strategy":"test strategy","preferredTrait":"cautious"}`, "")
 	if registerRec.Code != http.StatusOK {
 		t.Fatalf("typed register status = %d, want 200; body=%s", registerRec.Code, registerRec.Body.String())
 	}
@@ -430,8 +769,14 @@ func TestPublicAPITypedResponsesMatchCurrentContracts(t *testing.T) {
 	if registerPayload.Stats.MaxHp <= 0 || registerPayload.TurnState.SubmitWindowMs != 12000 {
 		t.Fatalf("typed register payload stats/turnState not populated: %+v %+v", registerPayload.Stats, registerPayload.TurnState)
 	}
+	if registerPayload.SessionToken == "" || registerPayload.RequestID == "" {
+		t.Fatalf("typed register payload missing sessionToken/requestId: %+v", registerPayload)
+	}
+	if registerPayload.LeaseExpiresAt <= 0 || registerPayload.LeaseTTLms <= 0 || registerPayload.SessionStatus != string(heroSessionActive) {
+		t.Fatalf("typed register payload missing lease metadata: %+v", registerPayload)
+	}
 
-	observeRec := performRequest(t, s.handleHeroRoutes, http.MethodGet, "/api/heroes/hero-typed/observe", "")
+	observeRec := performPlayerRequest(t, s.handleHeroRoutes, http.MethodGet, "/api/heroes/hero-typed/observe", "", registerPayload.SessionToken)
 	if observeRec.Code != http.StatusOK {
 		t.Fatalf("typed observe status = %d, want 200; body=%s", observeRec.Code, observeRec.Body.String())
 	}
@@ -444,6 +789,12 @@ func TestPublicAPITypedResponsesMatchCurrentContracts(t *testing.T) {
 	}
 	if len(observePayload.LegalActions) == 0 || len(observePayload.VisibleTiles) == 0 {
 		t.Fatalf("typed observe payload missing legal actions or visible tiles")
+	}
+	if observePayload.RequestID == "" {
+		t.Fatalf("typed observe payload missing requestId: %+v", observePayload)
+	}
+	if observePayload.LeaseExpiresAt <= 0 || observePayload.LeaseTTLms <= 0 || observePayload.SessionStatus != string(heroSessionActive) {
+		t.Fatalf("typed observe payload missing lease metadata: %+v", observePayload)
 	}
 
 	healthRec := performRequest(t, s.handleHealth, http.MethodGet, "/api/health", "")
@@ -485,15 +836,18 @@ func TestPublicAPITypedResponsesMatchCurrentContracts(t *testing.T) {
 		t.Fatalf("typed leaderboard first hero = %q, want hero-typed", leaderboardPayload.Leaderboard[0].HeroID)
 	}
 
-	logRec := performRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-typed/log", `{"message":"typed payload check"}`)
+	logRec := performPlayerRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-typed/log", `{"message":"typed payload check"}`, registerPayload.SessionToken)
 	logPayload := decodeJSONInto[logResponse](t, logRec)
 	if !logPayload.OK {
 		t.Fatalf("typed log payload = %+v, want ok=true", logPayload)
 	}
+	if logPayload.RequestID == "" {
+		t.Fatalf("typed log payload missing requestId: %+v", logPayload)
+	}
 
-	actRec := performRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-typed/act", `{"kind":"wait"}`)
+	actRec := performPlayerRequest(t, s.handleHeroRoutes, http.MethodPost, "/api/heroes/hero-typed/act", `{"kind":"wait"}`, registerPayload.SessionToken)
 	actPayload := decodeJSONInto[actionResponse](t, actRec)
-	if !actPayload.Accepted || actPayload.Message == "" {
+	if !actPayload.Accepted || actPayload.Message == "" || actPayload.RequestID == "" {
 		t.Fatalf("typed act payload = %+v, want accepted action", actPayload)
 	}
 }
@@ -532,7 +886,7 @@ func TestAdminRoutesStartStopAndReset(t *testing.T) {
 		t.Fatal("expected initial active board")
 	}
 
-	startRec := performRequest(t, s.handleAdminStart, http.MethodPost, "/api/admin/start", "")
+	startRec := performAdminRequest(t, s.handleAdminStart, http.MethodPost, "/api/admin/start", "")
 	if startRec.Code != http.StatusOK {
 		t.Fatalf("admin start status = %d, want 200; body=%s", startRec.Code, startRec.Body.String())
 	}
@@ -541,13 +895,13 @@ func TestAdminRoutesStartStopAndReset(t *testing.T) {
 		t.Fatalf("admin start payload = %+v, want running snapshot", startPayload)
 	}
 
-	startAgainRec := performRequest(t, s.handleAdminStart, http.MethodPost, "/api/admin/start", "")
+	startAgainRec := performAdminRequest(t, s.handleAdminStart, http.MethodPost, "/api/admin/start", "")
 	startAgainPayload := decodeJSONInto[adminSnapshotResponse](t, startAgainRec)
 	if !startAgainPayload.OK || !startAgainPayload.AlreadyStarted {
 		t.Fatalf("admin start-again payload = %+v, want alreadyStarted", startAgainPayload)
 	}
 
-	resetWhileRunningRec := performRequest(t, s.handleAdminReset, http.MethodPost, "/api/admin/reset", "")
+	resetWhileRunningRec := performAdminRequest(t, s.handleAdminReset, http.MethodPost, "/api/admin/reset", "")
 	if resetWhileRunningRec.Code != http.StatusConflict {
 		t.Fatalf("admin reset while running status = %d, want 409; body=%s", resetWhileRunningRec.Code, resetWhileRunningRec.Body.String())
 	}
@@ -556,7 +910,7 @@ func TestAdminRoutesStartStopAndReset(t *testing.T) {
 		t.Fatalf("admin reset while running payload = %+v, want board_running conflict", resetWhileRunningPayload)
 	}
 
-	stopRec := performRequest(t, s.handleAdminStop, http.MethodPost, "/api/admin/stop", "")
+	stopRec := performAdminRequest(t, s.handleAdminStop, http.MethodPost, "/api/admin/stop", "")
 	if stopRec.Code != http.StatusOK {
 		t.Fatalf("admin stop status = %d, want 200; body=%s", stopRec.Code, stopRec.Body.String())
 	}
@@ -565,13 +919,13 @@ func TestAdminRoutesStartStopAndReset(t *testing.T) {
 		t.Fatalf("admin stop payload = %+v, want completed snapshot", stopPayload)
 	}
 
-	stopAgainRec := performRequest(t, s.handleAdminStop, http.MethodPost, "/api/admin/stop", "")
+	stopAgainRec := performAdminRequest(t, s.handleAdminStop, http.MethodPost, "/api/admin/stop", "")
 	stopAgainPayload := decodeJSONInto[adminSnapshotResponse](t, stopAgainRec)
 	if !stopAgainPayload.OK || !stopAgainPayload.AlreadyStopped {
 		t.Fatalf("admin stop-again payload = %+v, want alreadyStopped", stopAgainPayload)
 	}
 
-	resetRec := performRequest(t, s.handleAdminReset, http.MethodPost, "/api/admin/reset", "")
+	resetRec := performAdminRequest(t, s.handleAdminReset, http.MethodPost, "/api/admin/reset", "")
 	if resetRec.Code != http.StatusOK {
 		t.Fatalf("admin reset status = %d, want 200; body=%s", resetRec.Code, resetRec.Body.String())
 	}
@@ -610,7 +964,7 @@ func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 		t.Fatal("expected join window to be armed for underfilled lobby")
 	}
 
-	settingsRec := performRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false}`)
+	settingsRec := performAdminRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false}`)
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("admin settings status = %d, want 200; body=%s", settingsRec.Code, settingsRec.Body.String())
 	}
@@ -627,47 +981,23 @@ func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 	}
 }
 
-func TestAdminSettingsRejectsUnpauseDuringGlobalWarmup(t *testing.T) {
+func TestAdminStartRejectsWhilePaused(t *testing.T) {
 	s := newHTTPTestServer()
 	s.gameSettings = game.GameSettings{Paused: true}
-	s.startUnlockAt = time.Now().Add(4 * time.Second)
-
-	settingsRec := performRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false}`)
-	if settingsRec.Code != http.StatusConflict {
-		t.Fatalf("admin settings status = %d, want 409; body=%s", settingsRec.Code, settingsRec.Body.String())
-	}
-	settingsPayload := decodeJSONInto[adminSettingsResponse](t, settingsRec)
-	if settingsPayload.OK || settingsPayload.Error != "warmup_active" {
-		t.Fatalf("admin settings payload = %+v, want warmup_active rejection", settingsPayload)
-	}
-	if settingsPayload.WarmupRemainingMs <= 0 {
-		t.Fatalf("warmup remaining = %d, want positive", settingsPayload.WarmupRemainingMs)
-	}
-	if !settingsPayload.Settings.Paused {
-		t.Fatalf("settings paused = %v, want true after rejected unpause", settingsPayload.Settings.Paused)
-	}
-	if !s.gameSettings.Paused {
-		t.Fatal("server should remain paused during global warmup")
-	}
-}
-
-func TestAdminStartRejectsDuringGlobalWarmup(t *testing.T) {
-	s := newHTTPTestServer()
-	s.startUnlockAt = time.Now().Add(5 * time.Second)
 	board := s.mgr.EnsureOpenBoard()
 	for i := 0; i < game.CFG.MinBotsToStart; i++ {
-		registerHTTPTestHero(t, s, fmt.Sprintf("hero-warmup-start-%d", i))
+		registerHTTPTestHero(t, s, fmt.Sprintf("hero-paused-start-%d", i))
 	}
 
-	startRec := performRequest(t, s.handleAdminStart, http.MethodPost, "/api/admin/start", "")
+	startRec := performAdminRequest(t, s.handleAdminStart, http.MethodPost, "/api/admin/start", "")
 	if startRec.Code != http.StatusConflict {
 		t.Fatalf("admin start status = %d, want 409; body=%s", startRec.Code, startRec.Body.String())
 	}
 	startPayload := decodeJSONInto[adminSnapshotResponse](t, startRec)
-	if startPayload.OK || startPayload.Error != "warmup_active" {
-		t.Fatalf("admin start payload = %+v, want warmup_active rejection", startPayload)
+	if startPayload.OK || startPayload.Error != "game_paused" {
+		t.Fatalf("admin start payload = %+v, want game_paused rejection", startPayload)
 	}
 	if board.Lifecycle() != game.LifecycleOpen {
-		t.Fatalf("board lifecycle = %s, want %s during warmup", board.Lifecycle(), game.LifecycleOpen)
+		t.Fatalf("board lifecycle = %s, want %s while paused", board.Lifecycle(), game.LifecycleOpen)
 	}
 }

@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-necropolis.dev/schemas/prompt-manifest-v1.json",
+  "title": "Neural Necropolis Prompt Manifest",
+  "description": "Declarative artifact for hosted prompt agents. This manifest describes prompts, model selection preferences, runner budgets, tool permissions, output contract, and deterministic fallback behavior without embedding secrets or executable code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "kind",
+    "agent",
+    "prompts",
+    "model",
+    "runner",
+    "io",
+    "tools",
+    "fallback"
+  ],
+  "properties": {
+    "manifestVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "kind": {
+      "type": "string",
+      "const": "neural-necropolis.prompt-manifest"
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayName", "strategy", "preferredTrait"],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "strategy": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "preferredTrait": {
+          "type": "string",
+          "enum": ["aggressive", "cautious", "greedy", "curious", "resilient"]
+        }
+      }
+    },
+    "prompts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system", "policy"],
+      "properties": {
+        "system": { "type": "string", "minLength": 1, "maxLength": 12000 },
+        "policy": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "persona": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "styleNotes": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selection", "temperature", "maxOutputTokens"],
+      "properties": {
+        "selection": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mode", "profile"],
+              "properties": {
+                "mode": { "type": "string", "const": "profile" },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9._-]+$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mode", "provider", "model"],
+              "properties": {
+                "mode": { "type": "string", "const": "direct" },
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "openai",
+                    "groq",
+                    "together",
+                    "fireworks",
+                    "perplexity",
+                    "ollama",
+                    "openai-compatible"
+                  ]
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:/-]+$"
+                }
+              }
+            }
+          ]
+        },
+        "temperature": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maxOutputTokens": { "type": "integer", "minimum": 32, "maximum": 512 },
+        "reasoningEffort": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        }
+      }
+    },
+    "runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisionTimeoutMs", "maxDecisionRetries"],
+      "properties": {
+        "decisionTimeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 60000
+        },
+        "maxDecisionRetries": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "maxConsecutiveFallbacks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "cooldownMs": { "type": "integer", "minimum": 0, "maximum": 5000 }
+      }
+    },
+    "io": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputMode", "outputMode", "requireReason"],
+      "properties": {
+        "inputMode": { "type": "string", "const": "observation-v1" },
+        "outputMode": { "type": "string", "const": "action-index-v1" },
+        "requireReason": { "type": "boolean" }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "allowed"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["none", "allowlist"] },
+        "allowed": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "uniqueItems": true,
+          "maxItems": 8
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mode": { "const": "none" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "allowed": { "maxItems": 0 } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "allowlist" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "allowed": { "minItems": 1 } }
+          }
+        }
+      ]
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["onTimeout", "onMalformedOutput", "onUnsafeOutput"],
+      "properties": {
+        "onTimeout": { "$ref": "#/$defs/fallbackAction" },
+        "onMalformedOutput": { "$ref": "#/$defs/fallbackAction" },
+        "onUnsafeOutput": { "$ref": "#/$defs/fallbackAction" }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._@-]+$"
+        },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "uniqueItems": true,
+          "maxItems": 12
+        },
+        "notes": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    }
+  },
+  "$defs": {
+    "fallbackAction": {
+      "type": "string",
+      "enum": ["wait", "rest", "first_legal", "reject_turn"]
+    }
+  }
+}

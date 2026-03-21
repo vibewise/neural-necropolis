@@ -1,0 +1,28 @@
+{
+  "name": "@neural-necropolis/agent-sdk",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared Neural Necropolis client SDK for hero registration, observation, action submission, and bot loop orchestration.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "default": "./src/types.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test ./test/**/*.test.mts"
+  },
+  "dependencies": {
+    "@neural-necropolis/protocol-ts": "*"
+  }
+}

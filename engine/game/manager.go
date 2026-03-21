@@ -351,7 +351,7 @@ func (m *Manager) Snapshot() ManagerSnapshot {
 		b := m.boards[id]
 		b.mu.RLock()
 		heroCount := len(b.state.Heroes)
-		warmupRemainingMs := int64(0)
+		joinWindowRemainingMs := int64(0)
 		queueStatus := "waiting for queue"
 		switch b.lifecycle {
 		case LifecycleQueued:
@@ -366,10 +366,10 @@ func (m *Manager) Snapshot() ManagerSnapshot {
 			} else if heroCount >= CFG.MinBotsToStart {
 				queueStatus = "ready to start"
 			} else if !b.autoStartAfter.IsZero() && time.Now().Before(b.autoStartAfter) {
-				queueStatus = "warm-up before start"
-				warmupRemainingMs = b.autoStartAfter.Sub(time.Now()).Milliseconds()
-				if warmupRemainingMs < 0 {
-					warmupRemainingMs = 0
+				queueStatus = "waiting for more heroes"
+				joinWindowRemainingMs = time.Until(b.autoStartAfter).Milliseconds()
+				if joinWindowRemainingMs < 0 {
+					joinWindowRemainingMs = 0
 				}
 			} else if heroCount >= CFG.MinBotsAfterWait {
 				queueStatus = "ready to start"
@@ -378,17 +378,17 @@ func (m *Manager) Snapshot() ManagerSnapshot {
 			}
 		}
 		summaries = append(summaries, BoardSummary{
-			BoardID:           b.ID,
-			BoardSlug:         MakeBoardSlug(b.state.DungeonName, b.ID),
-			BoardName:         b.state.DungeonName,
-			Status:            b.lifecycle,
-			QueueStatus:       queueStatus,
-			WarmupRemainingMs: warmupRemainingMs,
-			HeroCount:         heroCount,
-			MaxHeroes:         b.maxHeroes,
-			Turn:              b.state.Turn,
-			Seed:              b.state.Seed,
-			CompletionReason:  b.completionReason,
+			BoardID:               b.ID,
+			BoardSlug:             MakeBoardSlug(b.state.DungeonName, b.ID),
+			BoardName:             b.state.DungeonName,
+			Status:                b.lifecycle,
+			QueueStatus:           queueStatus,
+			JoinWindowRemainingMs: joinWindowRemainingMs,
+			HeroCount:             heroCount,
+			MaxHeroes:             b.maxHeroes,
+			Turn:                  b.state.Turn,
+			Seed:                  b.state.Seed,
+			CompletionReason:      b.completionReason,
 		})
 		b.mu.RUnlock()
 	}

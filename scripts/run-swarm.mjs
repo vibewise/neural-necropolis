@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 
-const MIN_COUNT = 2;
+const DEFAULT_ENGINE_HOST = "127.0.0.1";
+
+const MIN_COUNT = 1;
 const MAX_COUNT = 10;
 const DEFAULT_COUNT = 10;
 
@@ -8,10 +10,6 @@ const AI_SLOTS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
 
 const MODE_CONFIG = {
   scripted: {
-    engineEnv: {
-      BEAT_PLANNING_MS: "3000",
-      BEAT_ACTION_MS: "500",
-    },
     entries: [
       {
         label: "b1",
@@ -66,10 +64,6 @@ const MODE_CONFIG = {
     ],
   },
   aibots: {
-    engineEnv: {
-      BEAT_PLANNING_MS: "8000",
-      BEAT_ACTION_MS: "500",
-    },
     entries: AI_SLOTS.map((slot) => ({
       label: `ai${slot.toLowerCase()}`,
       command: "npm run run:aibots:bot",
@@ -78,8 +72,53 @@ const MODE_CONFIG = {
   },
 };
 
+function readServerUrl() {
+  return (process.env.NEURAL_NECROPOLIS_SERVER_URL ?? "").trim();
+}
+
+function defaultPortForProtocol(protocol, fallbackPort) {
+  if (protocol === "https:" || protocol === "wss:") return 443;
+  if (protocol === "http:" || protocol === "ws:") return 80;
+  return fallbackPort;
+}
+
+function parseEngineTarget(raw, fallbackPort) {
+  const configured = raw.trim();
+  if (!configured) {
+    return {
+      explicit: false,
+      protocol: "http:",
+      host: DEFAULT_ENGINE_HOST,
+      port: fallbackPort,
+      baseUrl: `http://${DEFAULT_ENGINE_HOST}:${fallbackPort}`,
+    };
+  }
+
+  const parsed = new URL(configured);
+  const port = parsed.port
+    ? Number.parseInt(parsed.port, 10)
+    : defaultPortForProtocol(parsed.protocol, fallbackPort);
+  return {
+    explicit: true,
+    protocol: parsed.protocol,
+    host: parsed.hostname || DEFAULT_ENGINE_HOST,
+    port,
+    baseUrl: parsed.toString().replace(/\/$/, ""),
+  };
+}
+
+async function ensureServerReachable(baseUrl) {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/health`);
+  if (!response.ok) {
+    throw new Error(
+      `[agents] server at ${baseUrl} responded with ${response.status}. Start the server separately with npm run run:engine.`,
+    );
+  }
+}
+
 function printUsage(mode) {
-  const scriptName = mode === "aibots" ? "run:aibots" : "run:scripted";
+  const scriptName =
+    mode === "aibots" ? "run:aibots:agents" : "run:scripted:agents";
   process.stderr.write(
     `Usage: npm run ${scriptName} -- <count>\nCount must be an integer from ${MIN_COUNT} to ${MAX_COUNT}. Default: ${DEFAULT_COUNT}.\n`,
   );
@@ -179,18 +218,21 @@ async function main() {
   const children = [];
   let exitCode = 0;
   let shuttingDown = false;
+  const fallbackPort = Number.parseInt(process.env.PORT ?? "3000", 10) || 3000;
+  const engineTarget = parseEngineTarget(readServerUrl(), fallbackPort);
 
   const selectedEntries = config.entries.slice(0, count);
   process.stderr.write(
     `[run:${rawMode}] starting ${selectedEntries.length} bot${selectedEntries.length === 1 ? "" : "s"}\n`,
   );
-
-  spawnManagedProcess(
-    children,
-    "engine",
-    "npm run run:engine",
-    config.engineEnv,
+  process.stderr.write(
+    `[run:${rawMode}] target server ${engineTarget.baseUrl}${engineTarget.explicit ? " (configured)" : " (local default)"}\n`,
   );
+  process.stderr.write(
+    `[run:${rawMode}] server startup is intentionally separate from agent startup\n`,
+  );
+
+  await ensureServerReachable(engineTarget.baseUrl);
 
   for (const entry of selectedEntries) {
     spawnManagedProcess(children, entry.label, entry.command, entry.env);

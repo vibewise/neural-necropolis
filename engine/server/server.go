@@ -2,6 +2,8 @@ package server
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,22 +20,52 @@ import (
 )
 
 type Server struct {
-	mgr           *game.Manager
-	planningMs    int
-	actionMs      int
-	warmupMs      int
-	startUnlockAt time.Time
-	maxTurns      int
-	port          int
-	turnPhase     game.TurnPhase
-	phaseStartAt  time.Time
-	phaseEndAt    time.Time
-	phaseTimer    *time.Timer
-	mu            sync.RWMutex
-	streamClients map[*sseClient]bool
-	streamMu      sync.Mutex
-	dashboardHTML string
-	gameSettings  game.GameSettings
+	mgr                *game.Manager
+	playerAuthToken    string
+	adminAuthToken     string
+	heroSessionLeaseMs int
+	planningMs         int
+	actionMs           int
+	maxTurns           int
+	port               int
+	turnPhase          game.TurnPhase
+	phaseStartAt       time.Time
+	phaseEndAt         time.Time
+	phaseTimer         *time.Timer
+	mu                 sync.RWMutex
+	streamClients      map[*sseClient]bool
+	streamMu           sync.Mutex
+	dashboardHTML      string
+	gameSettings       game.GameSettings
+	heroSessions       map[string]heroSession
+	actionCache        map[string]cachedActionResponse
+}
+
+type heroSessionStatus string
+
+const (
+	heroSessionActive  heroSessionStatus = "active"
+	heroSessionExpired heroSessionStatus = "expired"
+)
+
+type heroSession struct {
+	Token          string
+	BoardID        string
+	LeaseExpiresAt time.Time
+	LeaseTTL       time.Duration
+	Status         heroSessionStatus
+}
+
+type expiredHeroSession struct {
+	HeroID  string
+	BoardID string
+	Token   string
+}
+
+type cachedActionResponse struct {
+	Accepted  bool
+	Message   string
+	TurnState game.TurnState
 }
 
 type sseClient struct {
@@ -47,6 +79,10 @@ var (
 	dotenvVals map[string]string
 )
 
+const defaultDevPlayerAuthToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.neural-necropolis-dev-player.signature"
+const defaultDevAdminAuthToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.neural-necropolis-dev-admin.signature"
+const defaultHeroSessionLeaseMs = 30000
+
 func New() *Server {
 	port, _ := strconv.Atoi(envOr("PORT", "3000"))
 	planningMs, _ := strconv.Atoi(envOr("BEAT_PLANNING_MS", "12000"))
@@ -54,37 +90,37 @@ func New() *Server {
 	if actionMs <= 0 {
 		actionMs = 500
 	}
-	warmupMs, _ := strconv.Atoi(envOr("BOARD_WARMUP_MS", "10000"))
 	maxTurns, _ := strconv.Atoi(envOr("MAX_BOARD_TURNS", strconv.Itoa(game.CFG.MaxTurnsPerBoard)))
+	heroSessionLeaseMs, _ := strconv.Atoi(envOr("HERO_SESSION_LEASE_MS", strconv.Itoa(defaultHeroSessionLeaseMs)))
+	if heroSessionLeaseMs <= 0 {
+		heroSessionLeaseMs = defaultHeroSessionLeaseMs
+	}
 
 	return &Server{
-		mgr:           game.NewManager(),
-		planningMs:    planningMs,
-		actionMs:      actionMs,
-		warmupMs:      warmupMs,
-		maxTurns:      maxTurns,
-		port:          port,
-		turnPhase:     game.PhaseSubmit,
-		phaseStartAt:  time.Now(),
-		phaseEndAt:    time.Now().Add(time.Duration(planningMs) * time.Millisecond),
-		streamClients: make(map[*sseClient]bool),
-		dashboardHTML: DashboardHTML,
-		gameSettings:  game.GameSettings{Paused: true},
+		mgr:                game.NewManager(),
+		playerAuthToken:    resolvePlayerAuthToken(),
+		adminAuthToken:     resolveAdminAuthToken(),
+		heroSessionLeaseMs: heroSessionLeaseMs,
+		planningMs:         planningMs,
+		actionMs:           actionMs,
+		maxTurns:           maxTurns,
+		port:               port,
+		turnPhase:          game.PhaseSubmit,
+		phaseStartAt:       time.Now(),
+		phaseEndAt:         time.Now().Add(time.Duration(planningMs) * time.Millisecond),
+		streamClients:      make(map[*sseClient]bool),
+		dashboardHTML:      DashboardHTML,
+		gameSettings:       game.GameSettings{Paused: true},
+		heroSessions:       make(map[string]heroSession),
+		actionCache:        make(map[string]cachedActionResponse),
 	}
 }
 
 func (s *Server) Run() {
-	initialBoard := s.mgr.EnsureOpenBoard()
-	if s.warmupMs > 0 {
-		s.mu.Lock()
-		s.startUnlockAt = time.Now().Add(time.Duration(s.warmupMs) * time.Millisecond)
-		s.mu.Unlock()
-		if initialBoard != nil {
-			initialBoard.AddSystemEvent(fmt.Sprintf("Global warm-up active for %.1fs before auto-start unlocks.", float64(s.warmupMs)/1000))
-		}
-	}
+	s.mgr.EnsureOpenBoard()
 
 	go s.autoStartLoop()
+	go s.heroSessionLeaseLoop()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleDashboard)
@@ -109,7 +145,38 @@ func (s *Server) Run() {
 		displayHost = "localhost"
 	}
 	log.Printf("Neural Necropolis engine on http://%s:%d | submit=%s resolve=%s", displayHost, s.port, formatWindowMs(s.planningMs), formatWindowMs(s.actionMs))
+	log.Printf("Neural Necropolis player auth active on hero routes%s", authModeSuffix(s.playerAuthToken, defaultDevPlayerAuthToken))
+	log.Printf("Neural Necropolis admin auth active on admin routes%s", authModeSuffix(s.adminAuthToken, defaultDevAdminAuthToken))
 	log.Fatal(http.ListenAndServe(addr, withCORS(mux)))
+}
+
+func authModeSuffix(token string, fallback string) string {
+	if token == fallback {
+		return " (default dev token)"
+	}
+	return ""
+}
+
+func resolvePlayerAuthToken() string {
+	shared := envOr("NEURAL_NECROPOLIS_AUTH_TOKEN", "")
+	if token := envOr("NEURAL_NECROPOLIS_PLAYER_TOKEN", ""); token != "" {
+		return token
+	}
+	if shared != "" {
+		return shared
+	}
+	return defaultDevPlayerAuthToken
+}
+
+func resolveAdminAuthToken() string {
+	shared := envOr("NEURAL_NECROPOLIS_AUTH_TOKEN", "")
+	if token := envOr("NEURAL_NECROPOLIS_ADMIN_TOKEN", ""); token != "" {
+		return token
+	}
+	if shared != "" {
+		return shared
+	}
+	return defaultDevAdminAuthToken
 }
 
 func formatWindowMs(ms int) string {
@@ -142,17 +209,109 @@ func (s *Server) autoStartLoop() {
 	}
 }
 
-func (s *Server) warmupRemainingMs(now time.Time) int64 {
+func (s *Server) heroSessionLeaseLoop() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for now := range ticker.C {
+		s.expireHeroSessions(now)
+	}
+}
+
+func (s *Server) newHeroSession(boardID string, now time.Time) heroSession {
+	leaseTTL := time.Duration(s.heroSessionLeaseMs) * time.Millisecond
+	return heroSession{
+		Token:          randomToken(16),
+		BoardID:        boardID,
+		LeaseExpiresAt: now.Add(leaseTTL),
+		LeaseTTL:       leaseTTL,
+		Status:         heroSessionActive,
+	}
+}
+
+func (s *Server) renewHeroSession(heroID string, now time.Time) (heroSession, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.heroSessions[heroID]
+	if !ok || session.Status != heroSessionActive {
+		return heroSession{}, false
+	}
+	session.LeaseExpiresAt = now.Add(session.LeaseTTL)
+	s.heroSessions[heroID] = session
+	return session, true
+}
+
+func (s *Server) markHeroSessionExpired(heroID string) (expiredHeroSession, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.heroSessions[heroID]
+	if !ok || session.Status == heroSessionExpired {
+		return expiredHeroSession{}, false
+	}
+	session.Status = heroSessionExpired
+	s.heroSessions[heroID] = session
+	return expiredHeroSession{HeroID: heroID, BoardID: session.BoardID, Token: session.Token}, true
+}
+
+func (s *Server) expireHeroSessions(now time.Time) {
+	var expired []expiredHeroSession
+
+	s.mu.Lock()
+	for heroID, session := range s.heroSessions {
+		if session.Status != heroSessionActive {
+			continue
+		}
+		if !session.LeaseExpiresAt.IsZero() && !now.Before(session.LeaseExpiresAt) {
+			session.Status = heroSessionExpired
+			s.heroSessions[heroID] = session
+			expired = append(expired, expiredHeroSession{HeroID: heroID, BoardID: session.BoardID, Token: session.Token})
+		}
+	}
+	s.mu.Unlock()
+
+	for _, session := range expired {
+		s.handleExpiredHeroSession(session)
+	}
+}
+
+func (s *Server) handleExpiredHeroSession(expired expiredHeroSession) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.startUnlockAt.IsZero() || !now.Before(s.startUnlockAt) {
-		return 0
+	current, ok := s.heroSessions[expired.HeroID]
+	s.mu.RUnlock()
+	if !ok || current.Token != expired.Token || current.Status != heroSessionExpired {
+		return
 	}
-	remaining := s.startUnlockAt.Sub(now).Milliseconds()
-	if remaining < 0 {
-		return 0
+
+	board := s.mgr.GetBoard(expired.BoardID)
+	if board == nil {
+		return
 	}
-	return remaining
+
+	switch board.Lifecycle() {
+	case game.LifecycleOpen:
+		heroName, removed := board.RemoveHeroIfOpen(expired.HeroID, time.Now())
+		if !removed {
+			return
+		}
+		board.AddSystemEvent(fmt.Sprintf("%s lost connection before the board started and was removed from the queue.", heroName))
+		s.broadcastSnapshot(board.Snapshot(s.getTurnState(board)))
+		s.emitLog(fmt.Sprintf("%s session expired on %s and the hero was removed from the open board.", heroName, board.ID))
+	case game.LifecycleRunning:
+		heroName, changed := board.MarkHeroDisconnected(expired.HeroID)
+		if !changed {
+			return
+		}
+		board.AddSystemEvent(fmt.Sprintf("%s lost connection and can no longer act on this board.", heroName))
+		s.broadcastSnapshot(board.Snapshot(s.getTurnState(board)))
+		s.emitLog(fmt.Sprintf("%s session expired on %s and is now inactive for the rest of the board.", heroName, board.ID))
+	}
+}
+
+func heroSessionLeasePayload(session heroSession) map[string]interface{} {
+	return map[string]interface{}{
+		"leaseExpiresAt": session.LeaseExpiresAt.UnixMilli(),
+		"leaseTtlMs":     session.LeaseTTL.Milliseconds(),
+		"sessionStatus":  string(session.Status),
+	}
 }
 
 func (s *Server) tryAutoStartBoard() (*game.Board, bool) {
@@ -160,9 +319,6 @@ func (s *Server) tryAutoStartBoard() (*game.Board, bool) {
 	paused := s.gameSettings.Paused
 	s.mu.RUnlock()
 	if paused {
-		return nil, false
-	}
-	if s.warmupRemainingMs(time.Now()) > 0 {
 		return nil, false
 	}
 	return s.mgr.TryAutoStart()
@@ -176,28 +332,20 @@ func (s *Server) getTurnState(board *game.Board) game.TurnState {
 	now := time.Now()
 	seed := ""
 	turn := 0
-	warmupRemainingMs := int64(0)
 	if board != nil {
 		seed = board.Seed()
 		turn = board.Turn()
 	}
-	if !s.startUnlockAt.IsZero() && now.Before(s.startUnlockAt) {
-		warmupRemainingMs = s.startUnlockAt.Sub(now).Milliseconds()
-		if warmupRemainingMs < 0 {
-			warmupRemainingMs = 0
-		}
-	}
 	return game.TurnState{
-		Turn:              turn,
-		Phase:             s.turnPhase,
-		Started:           board != nil && board.Lifecycle() == game.LifecycleRunning,
-		SubmitWindowMs:    int64(s.planningMs),
-		ResolveWindowMs:   int64(s.actionMs),
-		PhaseEndsAt:       s.phaseEndAt.UnixMilli(),
-		PhaseDurationMs:   s.phaseEndAt.Sub(s.phaseStartAt).Milliseconds(),
-		PhaseElapsedMs:    now.Sub(s.phaseStartAt).Milliseconds(),
-		Seed:              seed,
-		WarmupRemainingMs: warmupRemainingMs,
+		Turn:            turn,
+		Phase:           s.turnPhase,
+		Started:         board != nil && board.Lifecycle() == game.LifecycleRunning,
+		SubmitWindowMs:  int64(s.planningMs),
+		ResolveWindowMs: int64(s.actionMs),
+		PhaseEndsAt:     s.phaseEndAt.UnixMilli(),
+		PhaseDurationMs: s.phaseEndAt.Sub(s.phaseStartAt).Milliseconds(),
+		PhaseElapsedMs:  now.Sub(s.phaseStartAt).Milliseconds(),
+		Seed:            seed,
 	}
 }
 
@@ -528,7 +676,14 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		board = s.mgr.EnsureOpenBoard()
 	}
 	snap := board.Snapshot(s.getTurnState(board))
-	data, _ := json.Marshal(snap)
+	s.mu.RLock()
+	settings := s.gameSettings
+	s.mu.RUnlock()
+	raw, _ := json.Marshal(snap)
+	var combined map[string]interface{}
+	json.Unmarshal(raw, &combined)
+	combined["gameSettings"] = settings
+	data, _ := json.Marshal(combined)
 	fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data)
 	flusher.Flush()
 
@@ -545,6 +700,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	requestID := s.prepareRequestID(w, r)
+	if !s.requirePlayerAuth(w, r, requestID) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -564,6 +723,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{
 				"error":     "hero_capacity_reached",
 				"message":   err.Error(),
+				"requestId": requestID,
 				"turnState": s.getTurnState(board),
 			})
 			return
@@ -578,6 +738,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	snap := board.Snapshot(s.getTurnState(board))
 	s.broadcastSnapshot(snap)
 	s.emitLog(fmt.Sprintf("%s joined — \"%s\" [%s]", hero.Name, hero.Strategy, hero.Trait))
+	now := time.Now()
+	session := s.newHeroSession(board.ID, now)
+	s.mu.Lock()
+	s.heroSessions[string(hero.ID)] = session
+	s.mu.Unlock()
 
 	// Auto-start check
 	if started, ok := s.tryAutoStartBoard(); ok {
@@ -588,19 +753,28 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]interface{}{
-		"id":        hero.ID,
-		"name":      hero.Name,
-		"trait":     hero.Trait,
-		"strategy":  hero.Strategy,
-		"stats":     hero.Stats,
-		"position":  hero.Position,
-		"boardId":   board.ID,
-		"turnState": s.getTurnState(board),
+		"id":           hero.ID,
+		"name":         hero.Name,
+		"trait":        hero.Trait,
+		"strategy":     hero.Strategy,
+		"stats":        hero.Stats,
+		"position":     hero.Position,
+		"boardId":      board.ID,
+		"sessionToken": session.Token,
+		"requestId":    requestID,
+		"turnState":    s.getTurnState(board),
+	}
+	for key, value := range heroSessionLeasePayload(session) {
+		resp[key] = value
 	}
 	writeJSON(w, resp)
 }
 
 func (s *Server) handleHeroRoutes(w http.ResponseWriter, r *http.Request) {
+	requestID := s.prepareRequestID(w, r)
+	if !s.requirePlayerAuth(w, r, requestID) {
+		return
+	}
 	// Routes: /api/heroes/:heroId/observe, /api/heroes/:heroId/act, /api/heroes/:heroId/log
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/heroes/"), "/")
 	if len(parts) < 2 {
@@ -613,6 +787,9 @@ func (s *Server) handleHeroRoutes(w http.ResponseWriter, r *http.Request) {
 	board := s.mgr.FindBoardForHero(heroID)
 	if board == nil {
 		http.Error(w, "hero not found on any board", http.StatusNotFound)
+		return
+	}
+	if !s.requireHeroSession(w, r, heroID, board.ID, requestID) {
 		return
 	}
 
@@ -651,7 +828,40 @@ func (s *Server) handleHeroRoutes(w http.ResponseWriter, r *http.Request) {
 		if settings.IncludePlayerPositions {
 			resp["allHeroPositions"] = board.GetAllHeroPositions()
 		}
+		resp["requestId"] = requestID
 		resp["gameSettings"] = settings
+		if session, ok := s.renewHeroSession(heroID, time.Now()); ok {
+			for key, value := range heroSessionLeasePayload(session) {
+				resp[key] = value
+			}
+		}
+		writeJSON(w, resp)
+
+	case "heartbeat":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		session, ok := s.renewHeroSession(heroID, time.Now())
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSON(w, map[string]interface{}{
+				"ok":        false,
+				"error":     "expired_session",
+				"requestId": requestID,
+				"message":   "Hero session expired. Re-register for an open board.",
+			})
+			return
+		}
+		resp := map[string]interface{}{
+			"ok":        true,
+			"boardId":   board.ID,
+			"requestId": requestID,
+			"turnState": s.getTurnState(board),
+		}
+		for key, value := range heroSessionLeasePayload(session) {
+			resp[key] = value
+		}
 		writeJSON(w, resp)
 
 	case "act":
@@ -668,6 +878,7 @@ func (s *Server) handleHeroRoutes(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{
 				"error":     "wrong_phase",
 				"message":   fmt.Sprintf("Actions only accepted during submit phase. Current: %s", phase),
+				"requestId": requestID,
 				"turnState": s.getTurnState(board),
 			})
 			return
@@ -679,16 +890,41 @@ func (s *Server) handleHeroRoutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		turn := board.Turn()
+		if idempotencyKey != "" {
+			if cached, ok := s.lookupActionCache(heroID, board.ID, turn, idempotencyKey); ok {
+				writeJSON(w, map[string]interface{}{
+					"accepted":  cached.Accepted,
+					"message":   cached.Message,
+					"requestId": requestID,
+					"replayed":  true,
+					"turnState": cached.TurnState,
+				})
+				return
+			}
+		}
+
 		accepted, msg := board.SubmitAction(heroID, heroAction)
+		turnState := s.getTurnState(board)
+		if idempotencyKey != "" {
+			s.storeActionCache(heroID, board.ID, turn, idempotencyKey, cachedActionResponse{
+				Accepted:  accepted,
+				Message:   msg,
+				TurnState: turnState,
+			})
+		}
 		if accepted {
 			s.emitLog(fmt.Sprintf("%s → %s%s", heroID, heroAction.Kind, dirSuffix(heroAction.Direction)))
 		} else {
 			s.emitLog(fmt.Sprintf("%s rejected action %s%s: %s", heroID, heroAction.Kind, dirSuffix(heroAction.Direction), msg))
 		}
+		_, _ = s.renewHeroSession(heroID, time.Now())
 		writeJSON(w, map[string]interface{}{
 			"accepted":  accepted,
 			"message":   msg,
-			"turnState": s.getTurnState(board),
+			"requestId": requestID,
+			"turnState": turnState,
 		})
 
 	case "log":
@@ -701,13 +937,14 @@ func (s *Server) handleHeroRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]bool{"ok": false})
+			writeJSON(w, map[string]interface{}{"ok": false, "requestId": requestID})
 			return
 		}
 		board.AddBotMessage(heroID, strings.TrimSpace(body.Message))
 		snap := board.Snapshot(s.getTurnState(board))
 		s.broadcastSnapshot(snap)
-		writeJSON(w, map[string]bool{"ok": true})
+		_, _ = s.renewHeroSession(heroID, time.Now())
+		writeJSON(w, map[string]interface{}{"ok": true, "requestId": requestID})
 
 	default:
 		http.NotFound(w, r)
@@ -715,6 +952,10 @@ func (s *Server) handleHeroRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminStart(w http.ResponseWriter, r *http.Request) {
+	requestID := s.prepareRequestID(w, r)
+	if !s.requireAdminAuth(w, r, requestID) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -736,14 +977,16 @@ func (s *Server) handleAdminStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if remaining := s.warmupRemainingMs(time.Now()); remaining > 0 {
+	s.mu.RLock()
+	paused := s.gameSettings.Paused
+	s.mu.RUnlock()
+	if paused {
 		w.WriteHeader(http.StatusConflict)
 		writeJSON(w, map[string]interface{}{
-			"ok":                false,
-			"error":             "warmup_active",
-			"message":           fmt.Sprintf("Global warm-up active for %.1fs more.", float64(remaining)/1000),
-			"warmupRemainingMs": remaining,
-			"snapshot":          board.Snapshot(s.getTurnState(board)),
+			"ok":       false,
+			"error":    "game_paused",
+			"message":  "Game is paused. Resume before starting a board.",
+			"snapshot": board.Snapshot(s.getTurnState(board)),
 		})
 		return
 	}
@@ -761,6 +1004,10 @@ func (s *Server) handleAdminStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminStop(w http.ResponseWriter, r *http.Request) {
+	requestID := s.prepareRequestID(w, r)
+	if !s.requireAdminAuth(w, r, requestID) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -781,6 +1028,10 @@ func (s *Server) handleAdminStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminReset(w http.ResponseWriter, r *http.Request) {
+	requestID := s.prepareRequestID(w, r)
+	if !s.requireAdminAuth(w, r, requestID) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -805,6 +1056,10 @@ func (s *Server) handleAdminReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
+	requestID := s.prepareRequestID(w, r)
+	if !s.requireAdminAuth(w, r, requestID) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		s.mu.RLock()
@@ -817,22 +1072,6 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
-		}
-		if !incoming.Paused {
-			if remaining := s.warmupRemainingMs(time.Now()); remaining > 0 {
-				s.mu.RLock()
-				current := s.gameSettings
-				s.mu.RUnlock()
-				w.WriteHeader(http.StatusConflict)
-				writeJSON(w, map[string]interface{}{
-					"ok":                false,
-					"error":             "warmup_active",
-					"message":           fmt.Sprintf("Turns can be enabled after the global warm-up ends in %.1fs.", float64(remaining)/1000),
-					"warmupRemainingMs": remaining,
-					"settings":          current,
-				})
-				return
-			}
 		}
 		s.mu.Lock()
 		wasPaused := s.gameSettings.Paused
@@ -914,11 +1153,134 @@ func loadDotenvFiles(paths []string) map[string]string {
 	return values
 }
 
+func (s *Server) requirePlayerAuth(w http.ResponseWriter, r *http.Request, requestID string) bool {
+	return s.requireBearerToken(w, r, requestID, s.playerAuthToken)
+}
+
+func (s *Server) requireAdminAuth(w http.ResponseWriter, r *http.Request, requestID string) bool {
+	return s.requireBearerToken(w, r, requestID, s.adminAuthToken)
+}
+
+func (s *Server) requireBearerToken(w http.ResponseWriter, r *http.Request, requestID string, expected string) bool {
+	if r == nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		writeJSON(w, map[string]interface{}{
+			"ok":        false,
+			"error":     "missing_auth",
+			"requestId": requestID,
+			"message":   "Missing bearer token.",
+		})
+		return false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if token == expected {
+		return true
+	}
+	status := http.StatusUnauthorized
+	errorCode := "missing_auth"
+	message := "Missing bearer token."
+	if token != "" {
+		errorCode = "invalid_auth"
+		message = "Invalid bearer token."
+	}
+	w.WriteHeader(status)
+	writeJSON(w, map[string]interface{}{
+		"ok":        false,
+		"error":     errorCode,
+		"requestId": requestID,
+		"message":   message,
+	})
+	return false
+}
+
+func (s *Server) requireHeroSession(w http.ResponseWriter, r *http.Request, heroID string, boardID string, requestID string) bool {
+	s.mu.RLock()
+	session, ok := s.heroSessions[heroID]
+	s.mu.RUnlock()
+	if !ok || session.BoardID != boardID {
+		w.WriteHeader(http.StatusUnauthorized)
+		writeJSON(w, map[string]interface{}{
+			"ok":        false,
+			"error":     "invalid_session",
+			"requestId": requestID,
+			"message":   "Unknown hero session.",
+		})
+		return false
+	}
+	provided := strings.TrimSpace(r.Header.Get("X-Hero-Session-Token"))
+	if provided == session.Token {
+		if session.Status == heroSessionExpired || (!session.LeaseExpiresAt.IsZero() && !time.Now().Before(session.LeaseExpiresAt)) {
+			if expired, ok := s.markHeroSessionExpired(heroID); ok {
+				s.handleExpiredHeroSession(expired)
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSON(w, map[string]interface{}{
+				"ok":        false,
+				"error":     "expired_session",
+				"requestId": requestID,
+				"message":   "Hero session expired. Re-register for an open board.",
+			})
+			return false
+		}
+		return true
+	}
+	errorCode := "missing_session"
+	message := "Missing hero session token."
+	if provided != "" {
+		errorCode = "invalid_session"
+		message = "Invalid hero session token."
+	}
+	w.WriteHeader(http.StatusUnauthorized)
+	writeJSON(w, map[string]interface{}{
+		"ok":        false,
+		"error":     errorCode,
+		"requestId": requestID,
+		"message":   message,
+	})
+	return false
+}
+
+func (s *Server) prepareRequestID(w http.ResponseWriter, r *http.Request) string {
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	if requestID == "" {
+		requestID = randomToken(8)
+	}
+	w.Header().Set("X-Request-Id", requestID)
+	return requestID
+}
+
+func (s *Server) lookupActionCache(heroID string, boardID string, turn int, key string) (cachedActionResponse, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.actionCache[actionCacheKey(heroID, boardID, turn, key)]
+	return value, ok
+}
+
+func (s *Server) storeActionCache(heroID string, boardID string, turn int, key string, response cachedActionResponse) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.actionCache[actionCacheKey(heroID, boardID, turn, key)] = response
+}
+
+func actionCacheKey(heroID string, boardID string, turn int, key string) string {
+	return fmt.Sprintf("%s|%s|%d|%s", heroID, boardID, turn, key)
+}
+
+func randomToken(byteLength int) string {
+	buf := make([]byte, byteLength)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf)
+}
+
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-Hero-Session-Token, X-Request-Id")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id")
+		w.Header().Set("Access-Control-Max-Age", "600")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return

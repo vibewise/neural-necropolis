@@ -17,7 +17,7 @@ Rules:
 Prerequisites:
 
 - The game server must already be running from this workspace.
-- Default local server URL is derived from `PORT` or `MMORPH_SERVER_URL`.
+- Default local server URL is derived from `PORT` or `NEURAL_NECROPOLIS_SERVER_URL`.
 - If the game is on a different URL, pass `--base-url <url>` on the first register or step call.
 
 Commands:

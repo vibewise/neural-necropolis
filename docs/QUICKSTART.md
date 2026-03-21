@@ -1,81 +1,105 @@
 # Neural Necropolis Quickstart
 
-This page is for consumers who want a small number of obvious ways to get the game moving.
+This repo treats the server and agents as separate processes, and the default workflow is remote attach.
 
-## Pick One Mode
+Rule of thumb:
 
-There are three supported run modes:
+1. get a server URL
+2. get a player token if needed
+3. point your agent at that server
+4. open the dashboard
+5. turn turns on when you actually want the board to progress
 
-1. `scripted swarm`
-   Fastest path. No model provider and no OpenClaw install.
-2. `local AI bot`
-   A local bot process in this repo calls your configured model provider.
-3. `OpenClaw agent mode`
-   An external OpenClaw agent inspects the game through repo helper commands.
+Toolchain requirement:
 
-Use `scripted swarm` if you only want a first successful run.
+- Node.js 22+
+- npm 10+
 
-## Shared Behavior
+## Fastest Path: Attach To An Existing Server
 
-In every mode:
+If someone already gave you a running server, start here.
 
-- the dashboard is local at `http://localhost:3000` unless you override `PORT`
-- the server starts with turns paused
-- after you open the dashboard, switch `Turns ON`
-- a board starts when no other board is running and either 4 heroes have joined or the join window expires with at least 1 hero attached
-
-## Hello World 1: Scripted Swarm
-
-Best for: first run, smoke tests, watching the game without any model setup.
+Environment examples:
 
 ```bash
-npm install
-npm run run:scripted
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=https://your-server.example NEURAL_NECROPOLIS_PLAYER_TOKEN=replace-me npm run run:aibots:bot
 ```
 
-Then:
+Dashboard-only admin example:
 
-1. open `http://localhost:3000`
-2. switch `Turns ON`
-3. watch the scripted roster join, move, fight, and score
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=https://your-server.example NEURAL_NECROPOLIS_ADMIN_TOKEN=replace-me npm run run:runner
+```
 
-Notes:
+Standalone dashboard host example:
 
-- `run:scripted` starts the engine and a built-in roster together
-- `npm run run:scripted -- 4` runs a smaller swarm
-- no `.env` model setup is required
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=https://your-server.example npm run run:dashboard:serve
+```
 
-## Hello World 2: One Local AI Bot
+If you are building your own TypeScript client, use [CONNECT_YOUR_BOT.md](CONNECT_YOUR_BOT.md).
 
-Best for: validating one configured provider slot before trying an AI swarm.
+## Self-Host The Server
 
-Prerequisite:
-
-- configure slot `A` in `.env` with a provider, model alias, and credentials
-
-Run these commands in separate terminals:
+Start the authoritative server in its own terminal:
 
 ```bash
 npm install
 npm run run:engine
-npm run run:aibots:bot
 ```
 
-Then:
+Optional bind override:
 
-1. open `http://localhost:3000`
-2. switch `Turns ON`
-3. watch the AI bot queue, observe, and submit actions
+```bash
+npx cross-env HOST=127.0.0.1 PORT=3002 npm run run:engine
+```
 
-Notes:
+Then open the dashboard at the address the server prints.
 
-- `run:aibots:bot` is the friendliest AI entrypoint because it only needs one slot
-- `run:aibots` is the swarm version and is better once you have multiple slots configured
-- by default `run:aibots:bot` uses slot `A`
+Shared behavior:
 
-## Hello World 3: OpenClaw Agent Mode
+- the server starts paused
+- the dashboard should show `Turns OFF` on first load
+- any configured global warm-up counts down before auto-start is allowed
+- only one board runs at a time
+- a board starts immediately at 4 heroes
+- otherwise a board starts after 10 seconds if at least 1 hero joined
 
-Best for: fully agentic play where the controller can inspect state and use helper commands.
+## Agent Connection Settings
+
+Set these in the agent terminal when needed:
+
+- `NEURAL_NECROPOLIS_SERVER_URL`: the server to connect to
+- `NEURAL_NECROPOLIS_PLAYER_TOKEN`: player bearer token when the deployment overrides the built-in default
+- `NEURAL_NECROPOLIS_ADMIN_TOKEN`: only needed for dashboard or admin control access
+- `NEURAL_NECROPOLIS_AUTH_TOKEN`: optional shared fallback if the deployment uses the same token for both roles
+
+The bundled SDK clients automatically handle the per-hero session token returned by registration.
+
+## One Agent
+
+### Scripted Bot
+
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:scripted:bot:berserker
+```
+
+Other scripted entries:
+
+- `npm run run:scripted:bot:explorer`
+- `npm run run:scripted:bot:treasure`
+
+### AI Bot
+
+Prerequisite:
+
+- configure slot `A` in `.env`
+
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:aibots:bot
+```
+
+### OpenClaw Agent
 
 Prerequisites:
 
@@ -85,60 +109,111 @@ Prerequisites:
 One-time onboarding:
 
 ```bash
-npm install
 npm run run:openclaw:onboard
 ```
 
-Runtime setup:
+Optional gateway terminal:
 
 ```bash
-npm run run:openclaw
+npm run run:openclaw:gateway
 ```
 
-Inside your OpenClaw session, start with:
+Bootstrap a session against an already running server:
 
 ```bash
-npm run run:openclaw:bootstrap -- --session claw
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:openclaw:bootstrap -- --session claw
 ```
 
-Then:
+## Swarm Commands
 
-1. open `http://localhost:3000`
-2. switch `Turns ON`
-3. let the OpenClaw session continue from the bootstrap result and choose legal actions
+These commands start agents only. They do not start the server.
 
-Notes:
-
-- `run:openclaw` starts the game engine and the OpenClaw gateway together
-- OpenClaw is a separate agent runtime, not the same local bot implementation used by `scripted` and `aibots`
-- use `--slug <name>` if you want a stable dungeon-flavored identity such as `crypt-ash`
-
-## Hello World 4: Autonomous OpenClaw Swarm
-
-Best for: one command that launches several OpenClaw-driven heroes that keep joining boards and playing turns on their own.
+Scripted, 1 bot:
 
 ```bash
-npm run run:openclaw:swarm -- 4
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:scripted:agents -- 1
 ```
 
-What this starts:
+Scripted, 4 bots:
 
-- the game engine
-- the OpenClaw gateway
-- four long-running OpenClaw workers with separate sessions and personas
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:scripted:agents -- 4
+```
 
-Notes:
+AI bots, 1 bot:
 
-- each worker keeps its own OpenClaw session memory with `openclaw agent --session-id ...`
-- workers use the same repo SDK loop as local bots, so they automatically re-queue after death or board completion
-- set `OPENCLAW_AGENT_LOCAL=1` if you want each worker to force local embedded OpenClaw execution instead of going through the gateway
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:aibots:agents -- 1
+```
 
-## Which Command Should I Reach For?
+AI bots, 4 bots:
 
-- I just want to see the game run: `npm run run:scripted`
-- I want to test one provider-backed bot: `npm run run:engine` plus `npm run run:aibots:bot`
-- I want a multi-bot AI swarm: `npm run run:aibots`
-- I want a fully agentic external controller: `npm run run:openclaw`
-- I want autonomous OpenClaw heroes with one command: `npm run run:openclaw:swarm -- 4`
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:aibots:agents -- 4
+```
 
-The longer reference, helper commands, and API surface are in [SPEC.md](SPEC.md).
+OpenClaw agents, 1 bot:
+
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:openclaw:agents -- 1
+```
+
+OpenClaw agents, 4 bots:
+
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:openclaw:agents -- 4
+```
+
+Behavior notes:
+
+- `run:scripted:agents`, `run:aibots:agents`, and `run:openclaw:agents` require an already running server
+- `run:openclaw:agents` still starts or reuses the OpenClaw gateway because that is agent infrastructure, not game-server infrastructure
+- with count `1`, the wrappers use the first roster entry:
+- scripted: first scripted slot
+- aibots: slot `A`
+- openclaw: `oc1 / crypt-ash / scout`
+
+## Troubleshooting
+
+- `401 missing_auth` or `401 invalid_auth`: set `NEURAL_NECROPOLIS_PLAYER_TOKEN` or `NEURAL_NECROPOLIS_ADMIN_TOKEN` for the target deployment.
+- `401 expired_session`: the server expired the hero lease. Re-register on an open board. The shared SDK does this automatically for bundled runtimes.
+- `409 wrong_phase`: wait for the next submit phase before calling `act`.
+- `409 hero_capacity_reached`: the current open board is full. Retry after the next board opens.
+
+For a custom TypeScript bot example and a fuller troubleshooting matrix, use [CONNECT_YOUR_BOT.md](CONNECT_YOUR_BOT.md).
+
+Static-host smoke check:
+
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run test:dashboard:smoke
+```
+
+## Are OpenClaw Bots Really Agents?
+
+Yes.
+
+The OpenClaw workers are not scripted heuristics pretending to be agents. They are long-running workers that:
+
+1. inspect game state through the shared SDK
+2. call OpenClaw for a decision each submit phase
+3. parse the returned action
+4. submit that legal action back through the public API
+
+Main files involved:
+
+- `scripts/run-openclaw-swarm.mjs`
+- `packages/openclaw-runner/src/autoplay.ts`
+- `packages/openclaw-runner/src/game-cli.ts`
+- `packages/agent-sdk/src/index.ts`
+
+## Operational Model
+
+Keep these boundaries clean:
+
+- server terminal: `npm run run:engine`
+- dashboard tab: monitor the active board and control turns
+- agent terminals: scripted bots, AI bots, or OpenClaw workers
+
+That separation is intentional now. The repo no longer treats “start the server” and “start the agents” as one combined action.
+
+The longer reference and public API surface are in [SPEC.md](SPEC.md).

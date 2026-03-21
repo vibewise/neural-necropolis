@@ -1,0 +1,22 @@
+{
+  "name": "@neural-necropolis/openclaw-runner",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenClaw-backed Neural Necropolis runtime helpers and autonomous worker package.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "run:bot": "tsx src/autoplay.ts",
+    "register": "tsx src/game-cli.ts register",
+    "bootstrap": "tsx src/game-cli.ts bootstrap",
+    "step": "tsx src/game-cli.ts step",
+    "act": "tsx src/game-cli.ts act",
+    "reset": "tsx src/game-cli.ts reset"
+  },
+  "dependencies": {
+    "@neural-necropolis/agent-sdk": "*",
+    "@neural-necropolis/protocol-ts": "*",
+    "dotenv": "^16.4.7"
+  }
+}

@@ -6,6 +6,7 @@ const MAX_COUNT = 10;
 const DEFAULT_COUNT = 4;
 const DEFAULT_OPENCLAW_PLANNING_MS = 30000;
 const MIN_RECOMMENDED_PLANNING_MS = 25000;
+const DEFAULT_ENGINE_HOST = "127.0.0.1";
 
 const OPENCLAW_WORKERS = [
   { label: "oc1", session: "crypt-ash", persona: "scout" },
@@ -20,20 +21,45 @@ const OPENCLAW_WORKERS = [
   { label: "oc10", session: "gloom-keep", persona: "raider" },
 ];
 
+function readServerUrl() {
+  return (process.env.NEURAL_NECROPOLIS_SERVER_URL ?? "").trim();
+}
+
+function readAuthToken() {
+  return (
+    process.env.NEURAL_NECROPOLIS_PLAYER_TOKEN ??
+    process.env.NEURAL_NECROPOLIS_AUTH_TOKEN ??
+    ""
+  ).trim();
+}
+
+function defaultPortForProtocol(protocol, fallbackPort) {
+  if (protocol === "https:" || protocol === "wss:") return 443;
+  if (protocol === "http:" || protocol === "ws:") return 80;
+  return fallbackPort;
+}
+
 function parseBaseUrl(raw, fallbackPort) {
   const configured = (raw ?? "").trim();
   if (!configured) {
-    return { host: "127.0.0.1", port: fallbackPort };
-  }
-  try {
-    const parsed = new URL(configured);
     return {
-      host: parsed.hostname || "127.0.0.1",
-      port: parsed.port ? Number.parseInt(parsed.port, 10) : fallbackPort,
+      explicit: false,
+      host: DEFAULT_ENGINE_HOST,
+      port: fallbackPort,
+      protocol: "http:",
+      baseUrl: `http://${DEFAULT_ENGINE_HOST}:${fallbackPort}`,
     };
-  } catch {
-    return { host: "127.0.0.1", port: fallbackPort };
   }
+  const parsed = new URL(configured);
+  return {
+    explicit: true,
+    host: parsed.hostname || DEFAULT_ENGINE_HOST,
+    port: parsed.port
+      ? Number.parseInt(parsed.port, 10)
+      : defaultPortForProtocol(parsed.protocol, fallbackPort),
+    protocol: parsed.protocol,
+    baseUrl: parsed.toString().replace(/\/$/, ""),
+  };
 }
 
 function probePort(host, port, timeoutMs = 750) {
@@ -55,7 +81,14 @@ function probePort(host, port, timeoutMs = 750) {
 }
 
 async function fetchTurnState(baseUrl) {
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/health`);
+  const headers = {};
+  const authToken = readAuthToken();
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/health`, {
+    headers,
+  });
   if (!response.ok) {
     throw new Error(`health check failed: ${response.status}`);
   }
@@ -65,7 +98,7 @@ async function fetchTurnState(baseUrl) {
 
 function printUsage() {
   process.stderr.write(
-    `Usage: npm run run:openclaw:swarm -- <count>\nCount must be an integer from ${MIN_COUNT} to ${MAX_COUNT}. Default: ${DEFAULT_COUNT}.\n`,
+    `Usage: npm run run:openclaw:agents -- <count>\nCount must be an integer from ${MIN_COUNT} to ${MAX_COUNT}. Default: ${DEFAULT_COUNT}.\n`,
   );
 }
 
@@ -148,10 +181,10 @@ async function main() {
   let shuttingDown = false;
   const selectedWorkers = OPENCLAW_WORKERS.slice(0, count);
   const engineTarget = parseBaseUrl(
-    process.env.MMORPH_SERVER_URL,
+    readServerUrl(),
     Number.parseInt(process.env.PORT ?? "3000", 10) || 3000,
   );
-  const engineBaseUrl = `http://${engineTarget.host}:${engineTarget.port}`;
+  const engineBaseUrl = engineTarget.baseUrl;
   const gatewayTarget = {
     host: "127.0.0.1",
     port:
@@ -160,6 +193,9 @@ async function main() {
   };
   process.stderr.write(
     `[run:openclaw:swarm] starting ${selectedWorkers.length} autonomous OpenClaw agent${selectedWorkers.length === 1 ? "" : "s"}\n`,
+  );
+  process.stderr.write(
+    `[run:openclaw:swarm] target server ${engineBaseUrl}${engineTarget.explicit ? " (configured)" : " (local default)"}\n`,
   );
 
   const engineRunning = await probePort(engineTarget.host, engineTarget.port);
@@ -178,16 +214,13 @@ async function main() {
       !allowShortWindows
     ) {
       throw new Error(
-        `[run:openclaw:swarm] existing engine submit window is ${submitWindowMs}ms; OpenClaw needs at least ${MIN_RECOMMENDED_PLANNING_MS}ms here. Restart the engine with BEAT_PLANNING_MS=${DEFAULT_OPENCLAW_PLANNING_MS} or let run:openclaw:swarm start the engine itself. Set OPENCLAW_ALLOW_SHORT_WINDOWS=1 to override.`,
+        `[run:openclaw:swarm] existing engine submit window is ${submitWindowMs}ms; OpenClaw needs at least ${MIN_RECOMMENDED_PLANNING_MS}ms here. Restart the engine yourself with BEAT_PLANNING_MS=${DEFAULT_OPENCLAW_PLANNING_MS}. Set OPENCLAW_ALLOW_SHORT_WINDOWS=1 to override.`,
       );
     }
   } else {
-    spawnManagedProcess(children, "engine", "npm run run:engine", {
-      BEAT_PLANNING_MS:
-        process.env.BEAT_PLANNING_MS ?? String(DEFAULT_OPENCLAW_PLANNING_MS),
-      BEAT_ACTION_MS: process.env.BEAT_ACTION_MS ?? "500",
-      BOARD_WARMUP_MS: process.env.BOARD_WARMUP_MS ?? "10000",
-    });
+    throw new Error(
+      `[run:openclaw:swarm] could not reach the server at ${engineBaseUrl}. Start the server separately with npm run run:engine.`,
+    );
   }
 
   const gatewayRunning = await probePort(

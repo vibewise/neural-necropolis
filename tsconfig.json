@@ -5,12 +5,18 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@neural-necropolis/agent-sdk": ["packages/agent-sdk/src/index.ts"],
+      "@neural-necropolis/agent-sdk/types": ["packages/agent-sdk/src/types.ts"],
+      "@neural-necropolis/protocol-ts": ["packages/protocol-ts/src/index.ts"]
+    },
     "esModuleInterop": true,
     "skipLibCheck": true,
     "strict": true,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "packages/**/*.ts"]
 }

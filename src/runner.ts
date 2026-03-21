@@ -1,9 +1,9 @@
 import "dotenv/config";
-import type { DashboardSnapshot } from "./types.js";
+import type { DashboardSnapshot } from "@neural-necropolis/protocol-ts";
 
 function resolveBaseUrl(): string {
   const port = (process.env.PORT ?? "3000").trim();
-  const configured = (process.env.MMORPH_SERVER_URL ?? "").trim();
+  const configured = (process.env.NEURAL_NECROPOLIS_SERVER_URL ?? "").trim();
   if (!configured) return `http://127.0.0.1:${port}`;
   try {
     const parsed = new URL(configured);

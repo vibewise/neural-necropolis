@@ -16,48 +16,6 @@ func boardStateForTest(board *game.Board) *game.BoardState {
 	return reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Interface().(*game.BoardState)
 }
 
-func TestTryAutoStartBoardRespectsGlobalWarmup(t *testing.T) {
-	s := &Server{
-		mgr:        game.NewManager(),
-		planningMs: 1000,
-		actionMs:   1000,
-		warmupMs:   10000,
-	}
-	s.startUnlockAt = time.Now().Add(5 * time.Second)
-
-	for i := 0; i < game.CFG.MinBotsToStart; i++ {
-		_, _, err := s.mgr.RegisterHero(game.HeroRegistration{
-			ID:       game.EntityID(fmt.Sprintf("hero-%d", i)),
-			Name:     fmt.Sprintf("Hero-%d", i),
-			Strategy: "test strategy",
-		})
-		if err != nil {
-			t.Fatalf("register hero %d: %v", i, err)
-		}
-	}
-
-	if board, started := s.tryAutoStartBoard(); started || board != nil {
-		t.Fatalf("auto-start triggered during global warmup: started=%v board=%v", started, board)
-	}
-
-	turnState := s.getTurnState(s.mgr.ActiveBoard())
-	if turnState.WarmupRemainingMs <= 0 {
-		t.Fatalf("expected positive warmup remaining during lock, got %d", turnState.WarmupRemainingMs)
-	}
-
-	s.mu.Lock()
-	s.startUnlockAt = time.Now().Add(-1 * time.Second)
-	s.mu.Unlock()
-
-	board, started := s.tryAutoStartBoard()
-	if !started || board == nil {
-		t.Fatalf("expected auto-start after warmup unlock, got started=%v board=%v", started, board)
-	}
-	if board.Lifecycle() != game.LifecycleRunning {
-		t.Fatalf("board lifecycle = %s, want %s", board.Lifecycle(), game.LifecycleRunning)
-	}
-}
-
 func TestTryAutoStartBoardRespectsPausedFlag(t *testing.T) {
 	s := &Server{
 		mgr:          game.NewManager(),
@@ -159,6 +117,67 @@ func TestTryAutoStartBoardStartsImmediatelyWhenLobbyFills(t *testing.T) {
 	boardStarted, started := s.tryAutoStartBoard()
 	if !started || boardStarted == nil {
 		t.Fatalf("expected immediate auto-start for full lobby, got started=%v board=%v", started, boardStarted)
+	}
+}
+
+func TestTryAutoStartBoardAllowsOnlyOneRunningBoardAtATime(t *testing.T) {
+	s := &Server{
+		mgr:        game.NewManager(),
+		planningMs: 1000,
+		actionMs:   1000,
+	}
+
+	for i := 0; i < game.CFG.MinBotsToStart; i++ {
+		_, _, err := s.mgr.RegisterHero(game.HeroRegistration{
+			ID:       game.EntityID(fmt.Sprintf("hero-first-%d", i)),
+			Name:     fmt.Sprintf("FirstHero-%d", i),
+			Strategy: "test strategy",
+		})
+		if err != nil {
+			t.Fatalf("register first-board hero %d: %v", i, err)
+		}
+	}
+
+	firstBoard, started := s.tryAutoStartBoard()
+	if !started || firstBoard == nil {
+		t.Fatalf("expected first board to auto-start, got started=%v board=%v", started, firstBoard)
+	}
+
+	var waitingBoard *game.Board
+	for i := 0; i < game.CFG.MinBotsToStart; i++ {
+		registeredBoard, _, err := s.mgr.RegisterHero(game.HeroRegistration{
+			ID:       game.EntityID(fmt.Sprintf("hero-second-%d", i)),
+			Name:     fmt.Sprintf("SecondHero-%d", i),
+			Strategy: "test strategy",
+		})
+		if err != nil {
+			t.Fatalf("register second-board hero %d: %v", i, err)
+		}
+		waitingBoard = registeredBoard
+	}
+
+	if waitingBoard == nil {
+		t.Fatal("expected second board to exist")
+	}
+	if waitingBoard.ID == firstBoard.ID {
+		t.Fatal("expected second batch of heroes to be assigned to a different board")
+	}
+	if waitingBoard.Lifecycle() != game.LifecycleOpen {
+		t.Fatalf("waiting board lifecycle = %s, want %s", waitingBoard.Lifecycle(), game.LifecycleOpen)
+	}
+
+	blockedBoard, blockedStart := s.tryAutoStartBoard()
+	if blockedStart || blockedBoard != nil {
+		t.Fatalf("unexpected second auto-start while another board is running: started=%v board=%v", blockedStart, blockedBoard)
+	}
+
+	s.mgr.CompleteBoard(firstBoard.ID, "test completion")
+	nextBoard, nextStarted := s.tryAutoStartBoard()
+	if !nextStarted || nextBoard == nil {
+		t.Fatalf("expected second board to start after first completed, got started=%v board=%v", nextStarted, nextBoard)
+	}
+	if nextBoard.ID != waitingBoard.ID {
+		t.Fatalf("started board id = %s, want %s", nextBoard.ID, waitingBoard.ID)
 	}
 }
 

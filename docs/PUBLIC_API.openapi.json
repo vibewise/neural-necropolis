@@ -1,0 +1,1389 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "Neural Necropolis Public API",
+    "version": "1.0.0",
+    "description": "Machine-readable contract for the current public Neural Necropolis HTTP API. This contract covers the stable player-facing and spectator-facing endpoints under /api. Operator-only admin routes are intentionally excluded from this first public contract and may be versioned separately later."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:3000",
+      "description": "Default local development server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "system"
+    },
+    {
+      "name": "heroes"
+    },
+    {
+      "name": "boards"
+    },
+    {
+      "name": "stream"
+    }
+  ],
+  "x-neural-necropolis-versioning": {
+    "currentMajor": 1,
+    "contractVersion": "1.0.0",
+    "pathStrategy": "The unversioned /api paths represent the current major contract. Additive changes may ship within 1.x. Breaking wire changes require a new major contract version and a new endpoint namespace such as /api/v2.",
+    "compatibility": "Consumers may rely on the documented required fields and response codes in this contract. New optional fields may be added without a major version bump.",
+    "deprecation": "Public fields and endpoints must be documented as deprecated before removal from the current major contract."
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": ["system"],
+        "operationId": "getHealth",
+        "summary": "Get current turn-state health",
+        "responses": {
+          "200": {
+            "description": "Current health and turn state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard": {
+      "get": {
+        "tags": ["boards"],
+        "operationId": "getDashboardSnapshot",
+        "summary": "Get the current dashboard snapshot",
+        "parameters": [
+          {
+            "name": "boardId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "When provided, request a specific board snapshot instead of the active board."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current board snapshot enriched with current game settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/boards": {
+      "get": {
+        "tags": ["boards"],
+        "operationId": "listBoards",
+        "summary": "List current board summaries",
+        "responses": {
+          "200": {
+            "description": "Snapshot of queued, open, running, and completed boards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagerSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/boards/completed": {
+      "get": {
+        "tags": ["boards"],
+        "operationId": "listCompletedBoards",
+        "summary": "List paginated completed board history",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 6
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated completed board history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompletedBoardsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stream": {
+      "get": {
+        "tags": ["stream"],
+        "operationId": "streamBoardEvents",
+        "summary": "Subscribe to server-sent snapshot and log events",
+        "responses": {
+          "200": {
+            "description": "Server-sent event stream. The first event is always a snapshot event for the active board.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "examples": {
+                  "snapshot": {
+                    "value": "event: snapshot\ndata: {\"boardId\":\"crypt-ash-7f2d\",\"seed\":\"crypt-ash-7f2d-123\"}\n\n"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/heroes/register": {
+      "post": {
+        "tags": ["heroes"],
+        "operationId": "registerHero",
+        "summary": "Register a hero on the earliest open board with room",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeroRegistration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Registered hero profile summary and current turn state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON request body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/heroes/{heroId}/observe": {
+      "get": {
+        "tags": ["heroes"],
+        "operationId": "observeHero",
+        "summary": "Observe hero state, local vision, and legal actions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/HeroId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current observation for the requested hero",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObserveResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Hero or board not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/heroes/{heroId}/act": {
+      "post": {
+        "tags": ["heroes"],
+        "operationId": "submitHeroAction",
+        "summary": "Submit one legal action for the current turn",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/HeroId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeroAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Action accepted or rejected within the current submit window",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON request body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Hero or board not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Actions are only accepted during the submit phase",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionConflictResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/heroes/{heroId}/heartbeat": {
+      "post": {
+        "tags": ["heroes"],
+        "operationId": "heartbeatHeroSession",
+        "summary": "Renew the current hero session lease without submitting an action",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/HeroId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lease renewed for the current hero session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeartbeatResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Hero or board not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/heroes/{heroId}/log": {
+      "post": {
+        "tags": ["heroes"],
+        "operationId": "appendHeroLogMessage",
+        "summary": "Append a bot log message to the current board feed",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/HeroId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeroLogRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Log message appended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or blank message payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Hero or board not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/leaderboard": {
+      "get": {
+        "tags": ["boards"],
+        "operationId": "getLeaderboard",
+        "summary": "Get the current board leaderboard",
+        "responses": {
+          "200": {
+            "description": "Current leaderboard entries for the active board",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaderboardResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/seed": {
+      "get": {
+        "tags": ["system"],
+        "operationId": "getCurrentSeed",
+        "summary": "Get the current active board seed",
+        "responses": {
+          "200": {
+            "description": "Current active board seed or an empty string if no active board exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "HeroId": {
+        "name": "heroId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Stable hero identifier chosen at registration time."
+      }
+    },
+    "schemas": {
+      "Direction": {
+        "type": "string",
+        "enum": ["north", "south", "east", "west"]
+      },
+      "TurnPhase": {
+        "type": "string",
+        "enum": ["submit", "resolve"]
+      },
+      "BoardLifecycle": {
+        "type": "string",
+        "enum": ["queued", "open", "running", "completed"]
+      },
+      "TileKind": {
+        "type": "string",
+        "enum": [
+          "floor",
+          "wall",
+          "door_closed",
+          "door_locked",
+          "door_open",
+          "trap_hidden",
+          "trap_visible",
+          "trap_triggered",
+          "chest",
+          "chest_locked",
+          "chest_open",
+          "treasure",
+          "potion",
+          "shrine",
+          "merchant",
+          "exit",
+          "shallow_water",
+          "lava"
+        ]
+      },
+      "EffectKind": {
+        "type": "string",
+        "enum": ["poison", "stun", "shield", "haste", "regen", "blind"]
+      },
+      "ItemSlot": {
+        "type": "string",
+        "enum": ["weapon", "armor", "accessory"]
+      },
+      "ItemKind": {
+        "type": "string",
+        "enum": [
+          "health_potion",
+          "antidote",
+          "key",
+          "scroll_reveal",
+          "scroll_teleport",
+          "sword",
+          "dagger",
+          "axe",
+          "staff",
+          "leather_armor",
+          "chain_armor",
+          "plate_armor",
+          "ring_vision",
+          "amulet_protection",
+          "boots_speed"
+        ]
+      },
+      "HeroTrait": {
+        "type": "string",
+        "enum": ["aggressive", "cautious", "greedy", "curious", "resilient"]
+      },
+      "HeroStatus": {
+        "type": "string",
+        "enum": ["alive", "dead", "escaped"]
+      },
+      "HeroSessionStatus": {
+        "type": "string",
+        "enum": ["active", "expired"]
+      },
+      "MonsterKind": {
+        "type": "string",
+        "enum": [
+          "goblin",
+          "skeleton",
+          "orc",
+          "dragon",
+          "wraith",
+          "spider",
+          "mimic"
+        ]
+      },
+      "MonsterBehavior": {
+        "type": "string",
+        "enum": ["patrol", "chase", "ambush", "guard", "flee"]
+      },
+      "NpcKind": {
+        "type": "string",
+        "enum": ["merchant", "shrine", "prisoner"]
+      },
+      "ActionKind": {
+        "type": "string",
+        "enum": ["move", "attack", "rest", "use_item", "interact", "wait"]
+      },
+      "EventType": {
+        "type": "string",
+        "enum": [
+          "combat",
+          "movement",
+          "death",
+          "loot",
+          "spawn",
+          "trap",
+          "interaction",
+          "effect",
+          "quest",
+          "system"
+        ]
+      },
+      "Position": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "x": { "type": "integer" },
+          "y": { "type": "integer" }
+        },
+        "required": ["x", "y"]
+      },
+      "StatBonus": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxHp": { "type": "integer" },
+          "attack": { "type": "integer" },
+          "defense": { "type": "integer" },
+          "speed": { "type": "integer" },
+          "perception": { "type": "integer" }
+        }
+      },
+      "StatusEffect": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "$ref": "#/components/schemas/EffectKind" },
+          "turnsRemaining": { "type": "integer" },
+          "magnitude": { "type": "integer" }
+        },
+        "required": ["kind", "turnsRemaining", "magnitude"]
+      },
+      "Item": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "$ref": "#/components/schemas/ItemKind" },
+          "name": { "type": "string" },
+          "slot": { "$ref": "#/components/schemas/ItemSlot" },
+          "statBonus": { "$ref": "#/components/schemas/StatBonus" },
+          "value": { "type": "integer" },
+          "consumable": { "type": "boolean" },
+          "description": { "type": "string" }
+        },
+        "required": ["id", "kind", "name", "value", "consumable", "description"]
+      },
+      "FloorItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "item": { "$ref": "#/components/schemas/Item" },
+          "position": { "$ref": "#/components/schemas/Position" }
+        },
+        "required": ["id", "item", "position"]
+      },
+      "HeroStats": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxHp": { "type": "integer" },
+          "hp": { "type": "integer" },
+          "attack": { "type": "integer" },
+          "defense": { "type": "integer" },
+          "speed": { "type": "integer" },
+          "perception": { "type": "integer" }
+        },
+        "required": ["maxHp", "hp", "attack", "defense", "speed", "perception"]
+      },
+      "HeroEquipment": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "weapon": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/Item" },
+              { "type": "null" }
+            ]
+          },
+          "armor": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/Item" },
+              { "type": "null" }
+            ]
+          },
+          "accessory": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/Item" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": ["weapon", "armor", "accessory"]
+      },
+      "HeroProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "strategy": { "type": "string" },
+          "preferredTrait": { "$ref": "#/components/schemas/HeroTrait" },
+          "trait": { "$ref": "#/components/schemas/HeroTrait" },
+          "stats": { "$ref": "#/components/schemas/HeroStats" },
+          "baseStats": { "$ref": "#/components/schemas/HeroStats" },
+          "position": { "$ref": "#/components/schemas/Position" },
+          "score": { "type": "integer" },
+          "kills": { "type": "integer" },
+          "tilesExplored": { "type": "integer" },
+          "gold": { "type": "integer" },
+          "inventory": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Item" }
+          },
+          "equipment": { "$ref": "#/components/schemas/HeroEquipment" },
+          "effects": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/StatusEffect" }
+          },
+          "fatigue": { "type": "integer" },
+          "morale": { "type": "integer" },
+          "status": { "$ref": "#/components/schemas/HeroStatus" },
+          "lastAction": { "type": "string" },
+          "turnsSurvived": { "type": "integer" }
+        },
+        "required": [
+          "id",
+          "name",
+          "strategy",
+          "trait",
+          "stats",
+          "baseStats",
+          "position",
+          "score",
+          "kills",
+          "tilesExplored",
+          "gold",
+          "inventory",
+          "equipment",
+          "effects",
+          "fatigue",
+          "morale",
+          "status",
+          "lastAction",
+          "turnsSurvived"
+        ]
+      },
+      "HeroRegistration": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "strategy": { "type": "string" },
+          "preferredTrait": { "$ref": "#/components/schemas/HeroTrait" }
+        },
+        "required": ["id", "name", "strategy"]
+      },
+      "Monster": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "$ref": "#/components/schemas/MonsterKind" },
+          "name": { "type": "string" },
+          "hp": { "type": "integer" },
+          "maxHp": { "type": "integer" },
+          "attack": { "type": "integer" },
+          "defense": { "type": "integer" },
+          "speed": { "type": "integer" },
+          "xpReward": { "type": "integer" },
+          "goldDrop": { "type": "integer" },
+          "behavior": { "$ref": "#/components/schemas/MonsterBehavior" },
+          "position": { "$ref": "#/components/schemas/Position" },
+          "effects": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/StatusEffect" }
+          },
+          "drops": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ItemKind" }
+          },
+          "alertRange": { "type": "integer" }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "hp",
+          "maxHp",
+          "attack",
+          "defense",
+          "speed",
+          "xpReward",
+          "goldDrop",
+          "behavior",
+          "position",
+          "effects",
+          "drops",
+          "alertRange"
+        ]
+      },
+      "Npc": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "$ref": "#/components/schemas/NpcKind" },
+          "name": { "type": "string" },
+          "position": { "$ref": "#/components/schemas/Position" },
+          "inventory": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Item" }
+          },
+          "interactedBy": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["id", "kind", "name", "position", "interactedBy"]
+      },
+      "HeroAction": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "$ref": "#/components/schemas/ActionKind" },
+          "direction": { "$ref": "#/components/schemas/Direction" },
+          "targetId": { "type": "string" },
+          "itemId": { "type": "string" }
+        },
+        "required": ["kind"]
+      },
+      "LegalAction": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "$ref": "#/components/schemas/ActionKind" },
+          "direction": { "$ref": "#/components/schemas/Direction" },
+          "targetId": { "type": "string" },
+          "itemId": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "required": ["kind", "description"]
+      },
+      "EventRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "turn": { "type": "integer" },
+          "type": { "$ref": "#/components/schemas/EventType" },
+          "summary": { "type": "string" }
+        },
+        "required": ["id", "turn", "type", "summary"]
+      },
+      "VisionTile": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "x": { "type": "integer" },
+          "y": { "type": "integer" },
+          "kind": { "$ref": "#/components/schemas/TileKind" }
+        },
+        "required": ["x", "y", "kind"]
+      },
+      "Landmark": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string" },
+          "name": { "type": "string" },
+          "position": { "$ref": "#/components/schemas/Position" }
+        },
+        "required": ["kind", "name", "position"]
+      },
+      "AllHeroPosition": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "position": { "$ref": "#/components/schemas/Position" }
+        },
+        "required": ["id", "name", "position"]
+      },
+      "GameSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "includeLandmarks": { "type": "boolean" },
+          "includePlayerPositions": { "type": "boolean" },
+          "paused": { "type": "boolean" }
+        },
+        "required": ["includeLandmarks", "includePlayerPositions", "paused"]
+      },
+      "TurnState": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "turn": { "type": "integer" },
+          "phase": { "$ref": "#/components/schemas/TurnPhase" },
+          "started": { "type": "boolean" },
+          "submitWindowMs": { "type": "integer" },
+          "resolveWindowMs": { "type": "integer" },
+          "phaseEndsAt": { "type": "integer" },
+          "phaseDurationMs": { "type": "integer" },
+          "phaseElapsedMs": { "type": "integer" },
+          "seed": { "type": "string" }
+        },
+        "required": [
+          "turn",
+          "phase",
+          "started",
+          "submitWindowMs",
+          "resolveWindowMs",
+          "phaseEndsAt",
+          "phaseDurationMs",
+          "phaseElapsedMs",
+          "seed"
+        ]
+      },
+      "HeroLease": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "leaseExpiresAt": { "type": "integer" },
+          "leaseTtlMs": { "type": "integer" },
+          "sessionStatus": { "$ref": "#/components/schemas/HeroSessionStatus" }
+        },
+        "required": ["leaseExpiresAt", "leaseTtlMs", "sessionStatus"]
+      },
+      "ScoreTrack": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "heroId": { "type": "string" },
+          "heroName": { "type": "string" },
+          "trait": { "$ref": "#/components/schemas/HeroTrait" },
+          "totalScore": { "type": "integer" },
+          "combatScore": { "type": "integer" },
+          "treasureScore": { "type": "integer" },
+          "explorationScore": { "type": "integer" },
+          "questScore": { "type": "integer" },
+          "turnsSurvived": { "type": "integer" },
+          "tilesExplored": { "type": "integer" },
+          "monstersKilled": { "type": "integer" },
+          "escaped": { "type": "boolean" },
+          "status": { "$ref": "#/components/schemas/HeroStatus" }
+        },
+        "required": [
+          "heroId",
+          "heroName",
+          "trait",
+          "totalScore",
+          "combatScore",
+          "treasureScore",
+          "explorationScore",
+          "questScore",
+          "turnsSurvived",
+          "tilesExplored",
+          "monstersKilled",
+          "escaped",
+          "status"
+        ]
+      },
+      "BotMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "heroId": { "type": "string" },
+          "heroName": { "type": "string" },
+          "turn": { "type": "integer" },
+          "createdAt": { "type": "integer" },
+          "message": { "type": "string" }
+        },
+        "required": ["id", "heroId", "heroName", "turn", "createdAt", "message"]
+      },
+      "WorldSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dungeonName": { "type": "string" },
+          "turn": { "type": "integer" },
+          "mapWidth": { "type": "integer" },
+          "mapHeight": { "type": "integer" }
+        },
+        "required": ["dungeonName", "turn", "mapWidth", "mapHeight"]
+      },
+      "LobbyInfo": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "boardId": { "type": "string" },
+          "boardSlug": { "type": "string" },
+          "boardName": { "type": "string" },
+          "attachedHeroes": { "type": "integer" },
+          "maxHeroes": { "type": "integer" },
+          "requiredHeroes": { "type": ["integer", "null"] },
+          "minHeroesToStart": { "type": "integer" },
+          "canStart": { "type": "boolean" },
+          "canReset": { "type": "boolean" },
+          "queueStatus": { "type": "string" },
+          "joinWindowRemainingMs": { "type": "integer" },
+          "status": { "$ref": "#/components/schemas/BoardLifecycle" },
+          "started": { "type": "boolean" },
+          "completionReason": { "type": "string" }
+        },
+        "required": [
+          "boardId",
+          "boardSlug",
+          "boardName",
+          "attachedHeroes",
+          "maxHeroes",
+          "requiredHeroes",
+          "minHeroesToStart",
+          "canStart",
+          "canReset",
+          "status",
+          "started"
+        ]
+      },
+      "BoardSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "seed": { "type": "string" },
+          "boardId": { "type": "string" },
+          "boardSlug": { "type": "string" },
+          "world": { "$ref": "#/components/schemas/WorldSummary" },
+          "heroes": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/HeroProfile" }
+          },
+          "leaderboard": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ScoreTrack" }
+          },
+          "monsters": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Monster" }
+          },
+          "npcs": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Npc" }
+          },
+          "floorItems": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FloorItem" }
+          },
+          "map": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/TileKind" }
+            }
+          },
+          "recentEvents": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/EventRecord" }
+          },
+          "botMessages": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/BotMessage" }
+          },
+          "turnState": { "$ref": "#/components/schemas/TurnState" },
+          "lobby": { "$ref": "#/components/schemas/LobbyInfo" }
+        },
+        "required": [
+          "seed",
+          "boardId",
+          "boardSlug",
+          "world",
+          "heroes",
+          "leaderboard",
+          "monsters",
+          "npcs",
+          "floorItems",
+          "map",
+          "recentEvents",
+          "botMessages",
+          "turnState",
+          "lobby"
+        ]
+      },
+      "DashboardResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/BoardSnapshot" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "gameSettings": { "$ref": "#/components/schemas/GameSettings" }
+            },
+            "required": ["gameSettings"]
+          }
+        ]
+      },
+      "BoardSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "boardId": { "type": "string" },
+          "boardSlug": { "type": "string" },
+          "boardName": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/BoardLifecycle" },
+          "queueStatus": { "type": "string" },
+          "joinWindowRemainingMs": { "type": "integer" },
+          "heroCount": { "type": "integer" },
+          "maxHeroes": { "type": "integer" },
+          "turn": { "type": "integer" },
+          "seed": { "type": "string" },
+          "completionReason": { "type": "string" }
+        },
+        "required": [
+          "boardId",
+          "boardSlug",
+          "boardName",
+          "status",
+          "heroCount",
+          "maxHeroes",
+          "turn",
+          "seed"
+        ]
+      },
+      "ManagerSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "boards": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/BoardSummary" }
+          }
+        },
+        "required": ["boards"]
+      },
+      "CompletedBoard": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "boardId": { "type": "string" },
+          "boardSlug": { "type": "string" },
+          "boardName": { "type": "string" },
+          "turn": { "type": "integer" },
+          "completionReason": { "type": "string" },
+          "seed": { "type": "string" },
+          "heroCount": { "type": "integer" },
+          "monsterCount": { "type": "integer" },
+          "topLeaderboard": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ScoreTrack" }
+          }
+        },
+        "required": [
+          "boardId",
+          "boardSlug",
+          "boardName",
+          "turn",
+          "completionReason",
+          "seed",
+          "heroCount",
+          "monsterCount",
+          "topLeaderboard"
+        ]
+      },
+      "CompletedBoardsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "boards": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CompletedBoard" }
+          },
+          "total": { "type": "integer" },
+          "offset": { "type": "integer" },
+          "limit": { "type": "integer" }
+        },
+        "required": ["boards", "total", "offset", "limit"]
+      },
+      "HealthResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ok": { "type": "boolean" },
+          "turnState": { "$ref": "#/components/schemas/TurnState" }
+        },
+        "required": ["ok", "turnState"]
+      },
+      "RegisterResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/HeroLease"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "trait": { "$ref": "#/components/schemas/HeroTrait" },
+              "strategy": { "type": "string" },
+              "stats": { "$ref": "#/components/schemas/HeroStats" },
+              "position": { "$ref": "#/components/schemas/Position" },
+              "boardId": { "type": "string" },
+              "sessionToken": { "type": "string" },
+              "requestId": { "type": "string" },
+              "turnState": { "$ref": "#/components/schemas/TurnState" }
+            },
+            "required": [
+              "id",
+              "name",
+              "trait",
+              "strategy",
+              "stats",
+              "position",
+              "boardId",
+              "sessionToken",
+              "requestId",
+              "turnState"
+            ]
+          }
+        ]
+      },
+      "ObserveResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/HeroLease"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "seed": { "type": "string" },
+              "turn": { "type": "integer" },
+              "boardId": { "type": "string" },
+              "boardStatus": { "$ref": "#/components/schemas/BoardLifecycle" },
+              "hero": { "$ref": "#/components/schemas/HeroProfile" },
+              "visibleTiles": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/VisionTile" }
+              },
+              "visibleMonsters": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/Monster" }
+              },
+              "visibleHeroes": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/HeroProfile" }
+              },
+              "visibleNpcs": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/Npc" }
+              },
+              "visibleItems": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/FloorItem" }
+              },
+              "recentEvents": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/EventRecord" }
+              },
+              "legalActions": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/LegalAction" }
+              },
+              "requestId": { "type": "string" },
+              "turnState": { "$ref": "#/components/schemas/TurnState" },
+              "landmarks": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/Landmark" }
+              },
+              "allHeroPositions": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/AllHeroPosition" }
+              },
+              "gameSettings": { "$ref": "#/components/schemas/GameSettings" }
+            },
+            "required": [
+              "seed",
+              "turn",
+              "boardId",
+              "boardStatus",
+              "hero",
+              "visibleTiles",
+              "visibleMonsters",
+              "visibleHeroes",
+              "visibleNpcs",
+              "visibleItems",
+              "recentEvents",
+              "legalActions",
+              "requestId",
+              "turnState",
+              "gameSettings"
+            ]
+          }
+        ]
+      },
+      "HeartbeatResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/HeroLease"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ok": { "type": "boolean", "const": true },
+              "boardId": { "type": "string" },
+              "requestId": { "type": "string" },
+              "turnState": { "$ref": "#/components/schemas/TurnState" }
+            },
+            "required": ["ok", "boardId", "requestId", "turnState"]
+          }
+        ]
+      },
+      "ActionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "accepted": { "type": "boolean" },
+          "message": { "type": "string" },
+          "requestId": { "type": "string" },
+          "replayed": { "type": "boolean" },
+          "turnState": { "$ref": "#/components/schemas/TurnState" }
+        },
+        "required": ["accepted", "message", "requestId", "turnState"]
+      },
+      "ActionConflictResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "error": { "type": "string", "enum": ["wrong_phase"] },
+          "message": { "type": "string" },
+          "requestId": { "type": "string" },
+          "turnState": { "$ref": "#/components/schemas/TurnState" }
+        },
+        "required": ["error", "message", "requestId", "turnState"]
+      },
+      "HeroLogRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "message": { "type": "string", "minLength": 1 } },
+        "required": ["message"]
+      },
+      "LogResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ok": { "type": "boolean", "const": true },
+          "requestId": { "type": "string" }
+        },
+        "required": ["ok", "requestId"]
+      },
+      "LogErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ok": { "type": "boolean", "const": false },
+          "requestId": { "type": "string" }
+        },
+        "required": ["ok", "requestId"]
+      },
+      "LeaderboardResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "leaderboard": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ScoreTrack" }
+          }
+        },
+        "required": ["leaderboard"]
+      },
+      "SeedResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "seed": { "type": "string" } },
+        "required": ["seed"]
+      }
+    }
+  }
+}

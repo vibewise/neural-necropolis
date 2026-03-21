@@ -435,16 +435,15 @@ type ScoreTrack struct {
 // ── Turn state ──
 
 type TurnState struct {
-	Turn              int       `json:"turn"`
-	Phase             TurnPhase `json:"phase"`
-	Started           bool      `json:"started"`
-	SubmitWindowMs    int64     `json:"submitWindowMs"`
-	ResolveWindowMs   int64     `json:"resolveWindowMs"`
-	PhaseEndsAt       int64     `json:"phaseEndsAt"`
-	PhaseDurationMs   int64     `json:"phaseDurationMs"`
-	PhaseElapsedMs    int64     `json:"phaseElapsedMs"`
-	Seed              string    `json:"seed"`
-	WarmupRemainingMs int64     `json:"warmupRemainingMs,omitempty"`
+	Turn            int       `json:"turn"`
+	Phase           TurnPhase `json:"phase"`
+	Started         bool      `json:"started"`
+	SubmitWindowMs  int64     `json:"submitWindowMs"`
+	ResolveWindowMs int64     `json:"resolveWindowMs"`
+	PhaseEndsAt     int64     `json:"phaseEndsAt"`
+	PhaseDurationMs int64     `json:"phaseDurationMs"`
+	PhaseElapsedMs  int64     `json:"phaseElapsedMs"`
+	Seed            string    `json:"seed"`
 }
 
 // ── Bot messages ──
@@ -472,20 +471,20 @@ const (
 // ── Lobby info (per-board) ──
 
 type LobbyInfo struct {
-	BoardID           string         `json:"boardId"`
-	BoardSlug         string         `json:"boardSlug"`
-	BoardName         string         `json:"boardName"`
-	AttachedHeroes    int            `json:"attachedHeroes"`
-	MaxHeroes         int            `json:"maxHeroes"`
-	RequiredHeroes    *int           `json:"requiredHeroes"`
-	MinHeroesToStart  int            `json:"minHeroesToStart"`
-	CanStart          bool           `json:"canStart"`
-	CanReset          bool           `json:"canReset"`
-	QueueStatus       string         `json:"queueStatus,omitempty"`
-	WarmupRemainingMs int64          `json:"warmupRemainingMs,omitempty"`
-	Status            BoardLifecycle `json:"status"`
-	Started           bool           `json:"started"`
-	CompletionReason  string         `json:"completionReason,omitempty"`
+	BoardID               string         `json:"boardId"`
+	BoardSlug             string         `json:"boardSlug"`
+	BoardName             string         `json:"boardName"`
+	AttachedHeroes        int            `json:"attachedHeroes"`
+	MaxHeroes             int            `json:"maxHeroes"`
+	RequiredHeroes        *int           `json:"requiredHeroes"`
+	MinHeroesToStart      int            `json:"minHeroesToStart"`
+	CanStart              bool           `json:"canStart"`
+	CanReset              bool           `json:"canReset"`
+	QueueStatus           string         `json:"queueStatus,omitempty"`
+	JoinWindowRemainingMs int64          `json:"joinWindowRemainingMs,omitempty"`
+	Status                BoardLifecycle `json:"status"`
+	Started               bool           `json:"started"`
+	CompletionReason      string         `json:"completionReason,omitempty"`
 }
 
 // ── Snapshots ──
@@ -519,17 +518,17 @@ type ManagerSnapshot struct {
 }
 
 type BoardSummary struct {
-	BoardID           string         `json:"boardId"`
-	BoardSlug         string         `json:"boardSlug"`
-	BoardName         string         `json:"boardName"`
-	Status            BoardLifecycle `json:"status"`
-	QueueStatus       string         `json:"queueStatus,omitempty"`
-	WarmupRemainingMs int64          `json:"warmupRemainingMs,omitempty"`
-	HeroCount         int            `json:"heroCount"`
-	MaxHeroes         int            `json:"maxHeroes"`
-	Turn              int            `json:"turn"`
-	Seed              string         `json:"seed"`
-	CompletionReason  string         `json:"completionReason,omitempty"`
+	BoardID               string         `json:"boardId"`
+	BoardSlug             string         `json:"boardSlug"`
+	BoardName             string         `json:"boardName"`
+	Status                BoardLifecycle `json:"status"`
+	QueueStatus           string         `json:"queueStatus,omitempty"`
+	JoinWindowRemainingMs int64          `json:"joinWindowRemainingMs,omitempty"`
+	HeroCount             int            `json:"heroCount"`
+	MaxHeroes             int            `json:"maxHeroes"`
+	Turn                  int            `json:"turn"`
+	Seed                  string         `json:"seed"`
+	CompletionReason      string         `json:"completionReason,omitempty"`
 }
 
 // ── Landmarks ──

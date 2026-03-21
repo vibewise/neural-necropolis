@@ -33,6 +33,7 @@ func TestSpecDocListsCurrentPublicEndpoints(t *testing.T) {
 		"`/api/heroes/register`",
 		"`/api/heroes/:id/observe`",
 		"`/api/heroes/:id/act`",
+		"`/api/heroes/:id/heartbeat`",
 		"`/api/heroes/:id/log`",
 		"`/api/dashboard`",
 		"`/api/boards`",
@@ -94,5 +95,29 @@ func TestSpecDocIncludesObservationAndRuntimeNotes(t *testing.T) {
 		"- resolve window duration",
 		"- maximum board length",
 		"- warm-up before boards auto-start",
+	})
+}
+
+func TestSpecDocMentionsMachineReadableContractAndVersioning(t *testing.T) {
+	doc := readSpecDoc(t)
+	requireSpecContainsAll(t, doc, "contract guidance", []string{
+		"[PUBLIC_API.openapi.json](PUBLIC_API.openapi.json)",
+		"the unversioned `/api/*` paths represent the current `v1` contract",
+		"breaking wire changes require a new major contract and a new path namespace such as `/api/v2/*`",
+		"operator-only admin routes are intentionally not part of this first public contract",
+	})
+}
+
+func TestSpecDocIncludesAuthGuidance(t *testing.T) {
+	doc := readSpecDoc(t)
+	requireSpecContainsAll(t, doc, "auth guidance", []string{
+		"`NEURAL_NECROPOLIS_PLAYER_TOKEN`",
+		"`NEURAL_NECROPOLIS_ADMIN_TOKEN`",
+		"`Idempotency-Key`",
+		"`X-Hero-Session-Token`",
+		"`leaseExpiresAt`",
+		"`leaseTtlMs`",
+		"`sessionStatus`",
+		"`expired_session`",
 	})
 }
