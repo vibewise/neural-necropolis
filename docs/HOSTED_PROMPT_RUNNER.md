@@ -12,6 +12,31 @@ The game engine still owns the authoritative board state. The prompt runner is a
 - worker execution path that validates a manifest, resolves operator-managed model credentials, and plays one board through `@neural-necropolis/agent-sdk`
 - per-job logs for audit and replay support
 - quota guards for global and per-owner concurrent jobs
+- dashboard integration: the built-in and standalone dashboards now expose a first `Hosted Agents` tab for prompt drafting, manifest storage, job launch, job inspection, log viewing, and cancel actions
+
+## Dashboard Status
+
+The current dashboard integration is intentionally the first working slice, not the finished product.
+
+What it does now:
+
+- stores the prompt-runner base URL and optional bearer token in the browser
+- drafts a prompt manifest from form fields instead of requiring manual JSON editing first
+- previews the generated manifest before upload
+- stores a manifest through `POST /manifests`
+- creates a hosted job through `POST /jobs`
+- lists manifests and jobs from the control plane
+- shows per-job logs and exposes cancel for queued or running jobs
+- surfaces prompt-runner reachability and common failures such as auth problems or quota conflicts
+
+What it does not do yet:
+
+- live log streaming
+- manifest revision history and diffing
+- profile discovery from the runner
+- multi-job filtering, search, or owner views
+- job retry, clone, or relaunch flows
+- first-class remote deployment UX beyond direct control-plane access
 
 ## Execution Model
 
@@ -162,6 +187,50 @@ Base URL resolution order:
 1. profile `baseUrl`
 2. provider-specific env var such as `OPENAI_BASE_URL`
 3. built-in known provider base URL
+
+## Development Plan
+
+The prompt runner should become the easiest path for prompt-authored play, while the game server at `:3000` remains the simplest way to watch and operate a board locally.
+
+### Phase 1: First Browser Workflow
+
+Status: shipped in the initial dashboard `Hosted Agents` tab.
+
+- connect the dashboard to prompt runner from the browser
+- draft a manifest from structured form fields
+- preview the generated manifest JSON
+- store a manifest and launch a hosted job without leaving the dashboard
+- inspect jobs, logs, and quota-related failures in one place
+
+### Phase 2: Better Prompt Authoring
+
+- add richer prompt templates for common agent archetypes
+- validate manifests in the browser before upload with clear field-level errors
+- support import/export so operators can move between dashboard editing and repo-managed JSON files
+- expose model profile guidance in the UI so authors understand which profiles are available
+- support saving draft prompts locally before submission
+
+### Phase 3: Better Hosted Operations
+
+- add retry, duplicate, cancel, and relaunch flows directly from the jobs list
+- add filtering by owner, board, status, and manifest id
+- show clearer quota accounting, including which active jobs are consuming the current owner budget
+- add log tailing and better failure summaries for malformed output, timeout, and unsafe-output fallback chains
+- add links from a hosted job to the hero currently attached on the active board
+
+### Phase 4: Review And Safety
+
+- add a review state for manifests before they are eligible for launch
+- add manifest revision history and diff views
+- add clearer secret and model-credential separation in the operator UX
+- add policy hooks for what kinds of prompts or tool policies are allowed in a deployment
+
+### Phase 5: Productized Remote Use
+
+- make remote prompt-runner deployments easier to connect safely from the dashboard
+- add a cleaner browser-first story for teams running the control plane outside the local machine
+- add richer observability for multi-board or multi-operator environments
+- evaluate a proxy or gateway path when direct browser-to-runner access is not the right deployment shape
 
 ## Secrets And Isolation
 

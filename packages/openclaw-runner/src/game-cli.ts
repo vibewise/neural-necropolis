@@ -174,6 +174,18 @@ function titleCaseSlug(slug: string): string {
     .join(" ");
 }
 
+function formatOpenClawLabel(slug: string): string {
+  return titleCaseSlug(slug).replace(/\bOpenclaw\b/g, "OpenClaw");
+}
+
+function buildDefaultHeroName(slug: string): string {
+  const label = formatOpenClawLabel(slug);
+  if (/^openclaw(?:$|[-_])/i.test(slug)) {
+    return label;
+  }
+  return `OpenClaw ${label}`;
+}
+
 function resolveHeroSlug(
   session: string,
   options: Record<string, string | boolean>,
@@ -254,7 +266,7 @@ function buildState(
     id: heroId,
     name:
       getStringOption(options, "name") ??
-      (heroSlug ? `OpenClaw ${titleCaseSlug(heroSlug)}` : undefined) ??
+      (heroSlug ? buildDefaultHeroName(heroSlug) : undefined) ??
       existing?.hero.name ??
       DEFAULT_NAME,
     strategy:

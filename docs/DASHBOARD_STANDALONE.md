@@ -2,7 +2,22 @@
 
 Use this when you want to host the Neural Necropolis dashboard separately from the Go server binary.
 
+If you are already opening `http://127.0.0.1:3000` for a local game, you do not need this.
+
 The dashboard is still just a browser client. It talks to the public spectator routes and the admin routes over HTTP. It does not require engine-internal access.
+
+## Should Most Users Care?
+
+Usually, no.
+
+For most local runs, the server-served dashboard at `http://127.0.0.1:3000` is the correct UI and the only dashboard you need.
+
+Keep the standalone dashboard only if you care about at least one of these:
+
+1. separate UI hosting from the Go binary
+2. cross-origin browser testing
+3. deploying the UI independently from the server later
+4. smoke-testing the extracted static dashboard package
 
 ## What Exists
 

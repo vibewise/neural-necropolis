@@ -6,9 +6,24 @@ Neural Necropolis is a beat-based dungeon arena where heroes explore, fight, loo
 
 The Go engine under `engine/` is the only supported server runtime.
 
-Quick links:
+## Start Here
 
+If you are running locally, there is one primary path:
+
+1. start the server
+2. open `http://127.0.0.1:3000`
+3. attach bots directly or run prompt runner and submit a hosted job
+
+Everything else is optional infrastructure or deeper reference material.
+
+Primary docs:
+
+- start here: [docs/START_HERE.md](docs/START_HERE.md)
 - command-first setup: [docs/QUICKSTART.md](docs/QUICKSTART.md)
+- prompt runner demo: [docs/PROMPT_RUNNER_DEMO.md](docs/PROMPT_RUNNER_DEMO.md)
+
+Optional or advanced docs:
+
 - connect a custom bot through the SDK: [docs/CONNECT_YOUR_BOT.md](docs/CONNECT_YOUR_BOT.md)
 - standalone dashboard assumptions: [docs/DASHBOARD_STANDALONE.md](docs/DASHBOARD_STANDALONE.md)
 - prompt manifest product contract: [docs/PROMPT_MANIFEST.md](docs/PROMPT_MANIFEST.md)
@@ -27,12 +42,25 @@ This repo uses npm workspaces and `workspace:*` dependencies. If `npm install` f
 
 ## Primary Workflow
 
-The architecture target is remote attach:
+If you are running locally, use this path first:
 
-1. get a server URL
-2. get a player token if the deployment does not use the built-in default
-3. run a client against that server
-4. open the dashboard or stream viewer
+```bash
+npm install
+npm run run:engine
+```
+
+Then open:
+
+```text
+http://127.0.0.1:3000
+```
+
+Then choose one optional attachment path:
+
+- direct bots: scripted, AI bots, or OpenClaw
+- hosted prompt jobs through prompt runner
+
+The standalone dashboard is optional. It exists only for separately hosted UI deployments, not because local play needs a second dashboard.
 
 The shared SDK is the supported client entrypoint for TypeScript bots. Start with [docs/CONNECT_YOUR_BOT.md](docs/CONNECT_YOUR_BOT.md) if you want to attach your own bot instead of using a bundled runtime.
 
@@ -43,20 +71,13 @@ If you are self-hosting the server, the equivalent local flow is:
 3. set `NEURAL_NECROPOLIS_SERVER_URL` in any client runtime
 4. register, observe, and act through the published HTTP protocol
 
-Minimal local example:
+One-command local demos:
 
-```bash
-npm install
-npm run run:engine
-```
+- `npm run run:demo:local`: starts the server and a small scripted bot mix for a local dashboard demo
+- `npm run run:demo:prompt-runner`: starts the server and prompt runner, then prints the exact upload and hosted-job commands
+- `npm run run:demo:prompt-runner -- --auto`: starts the server and prompt runner, uploads the example manifest, creates the hosted job, and prints the job status
 
-Then, in another terminal:
-
-```bash
-npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:aibots:bot
-```
-
-Then open `http://localhost:3000`. The server starts paused, so agents can attach before you switch `Turns ON`.
+The server starts paused, so agents can attach before you switch `Turns ON`.
 
 The same flow works against a remote host. Replace the local URL with the server address you were given.
 
@@ -122,9 +143,12 @@ npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3002 npm run run:aib
 Most consumers only need these entrypoints:
 
 - `npm run run:engine`: run the authoritative game server
-- `npm run run:dashboard:serve`: serve the extracted standalone dashboard package locally
+- `npm run run:demo:local`: one-command local server plus small scripted demo mix
+- `npm run run:demo:prompt-runner`: one-command local server plus prompt-runner control plane demo
+- `npm run run:dashboard:serve`: serve the extracted standalone dashboard package locally when you intentionally want a separate UI host
 - `npm run run:aibots:bot`: connect one provider-backed client to an already running server
 - `npm run run:openclaw:bootstrap -- --session claw`: inspect and attach an OpenClaw-controlled session to an already running server
+- `npm run run:openclaw:bot`: start one persistent autonomous OpenClaw worker against an already running server
 - `npm run run:prompt-runner`: start the hosted prompt-runner control plane on `127.0.0.1:4010` by default
 - `npm run run:scripted:agents`: start a scripted swarm against an already running server
 - `npm run run:aibots:agents`: start an AI swarm against an already running server

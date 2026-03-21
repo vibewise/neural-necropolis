@@ -2,6 +2,8 @@
 
 This repo treats the server and agents as separate processes, and the default workflow is remote attach.
 
+If you want the clearest local starting point, read [START_HERE.md](START_HERE.md) first.
+
 Rule of thumb:
 
 1. get a server URL
@@ -9,6 +11,20 @@ Rule of thumb:
 3. point your agent at that server
 4. open the dashboard
 5. turn turns on when you actually want the board to progress
+
+This file is command-first. It answers: “I already know which client path I want; what exact commands do I run?”
+
+Use the other docs like this:
+
+- [START_HERE.md](START_HERE.md): the default local flow and component map
+- [PROMPT_RUNNER_DEMO.md](PROMPT_RUNNER_DEMO.md): hosted prompt-agent demo
+- [DASHBOARD_STANDALONE.md](DASHBOARD_STANDALONE.md): optional separate UI hosting
+
+Demo shortcuts:
+
+- `npm run run:demo:local`: start the server and a small scripted demo mix
+- `npm run run:demo:prompt-runner`: start the server and prompt runner, then print the hosted demo commands
+- `npm run run:demo:prompt-runner -- --auto`: start the server and prompt runner, upload the example manifest, create the hosted job automatically, and print the job status
 
 Toolchain requirement:
 
@@ -36,6 +52,8 @@ Standalone dashboard host example:
 ```bash
 npx cross-env NEURAL_NECROPOLIS_SERVER_URL=https://your-server.example npm run run:dashboard:serve
 ```
+
+You do not need the standalone dashboard for normal local play. If you are already using `http://127.0.0.1:3000`, you already have the built-in dashboard.
 
 If you are building your own TypeScript client, use [CONNECT_YOUR_BOT.md](CONNECT_YOUR_BOT.md).
 
@@ -106,6 +124,14 @@ Prerequisites:
 - OpenClaw CLI installed
 - a tool-capable OpenClaw model configured
 
+Choose the command that matches the experience you want:
+
+- `npm run run:openclaw:bootstrap`: inspect the server, join an open board if possible, print the current state, then exit
+- `npm run run:openclaw:bot`: one persistent autonomous OpenClaw worker hero; this is the command most people want
+- `npm run run:openclaw:agents -- 1`: the same persistent worker flow, wrapped in the swarm launcher
+
+If you want a specific saved session, pass `--session <name>` explicitly.
+
 One-time onboarding:
 
 ```bash
@@ -118,10 +144,36 @@ Optional gateway terminal:
 npm run run:openclaw:gateway
 ```
 
-Bootstrap a session against an already running server:
+Persistent autonomous worker against an already running server:
+
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 OPENCLAW_AGENT_LOCAL=1 npm run run:openclaw:bot -- --session crypt-ash --slug crypt-ash --persona scout
+```
+
+One-shot bootstrap against an already running server:
 
 ```bash
 npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 npm run run:openclaw:bootstrap -- --session claw
+```
+
+Local Windows flow with one persistent OpenClaw bot:
+
+1. Terminal 1, start the server with a longer planning window for OpenClaw:
+
+```bash
+npx cross-env BEAT_PLANNING_MS=30000 npm run run:engine
+```
+
+2. Terminal 2, start one persistent OpenClaw worker:
+
+```bash
+npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3000 OPENCLAW_AGENT_LOCAL=1 npm run run:openclaw:bot -- --session crypt-ash --slug crypt-ash --persona scout
+```
+
+3. Browser, open the dashboard and switch `Turns ON`:
+
+```text
+http://127.0.0.1:3000
 ```
 
 ## Swarm Commands
@@ -169,6 +221,7 @@ Behavior notes:
 - `run:scripted:agents`, `run:aibots:agents`, and `run:openclaw:agents` require an already running server
 - `run:scripted:agents` tries to set the server submit window to `2000ms` through `/api/admin/settings` before attaching bots; override with `SCRIPTED_SUBMIT_WINDOW_MS`
 - `run:openclaw:agents` still starts or reuses the OpenClaw gateway because that is agent infrastructure, not game-server infrastructure
+- `run:openclaw:bot` and `run:openclaw:agents` are persistent worker modes; `run:openclaw:bootstrap` is not
 - with count `1`, the wrappers use the first roster entry:
 - scripted: first scripted slot
 - aibots: slot `A`

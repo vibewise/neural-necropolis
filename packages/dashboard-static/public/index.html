@@ -132,6 +132,40 @@
     .toggle .slider::before{content:'';position:absolute;left:3px;top:3px;width:18px;height:18px;background:#8a94af;border-radius:50%;transition:transform .2s,background .2s}
     .toggle input:checked+.slider{background:#1e6e44}
     .toggle input:checked+.slider::before{transform:translateX(20px);background:#60efac}
+    .hosted-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .hosted-span{grid-column:1 / -1}
+    .field-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--ink)}
+    .field span{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase}
+    .field input,.field textarea,.field select{width:100%;border:1px solid #41517a;background:#141b2b;color:var(--ink);border-radius:8px;padding:8px 10px;font:inherit}
+    .field textarea{min-height:96px;resize:vertical}
+    .field.compact textarea{min-height:72px}
+    .field.full{grid-column:1 / -1}
+    .hosted-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+    .hosted-status{min-height:16px;font-size:11px;color:var(--muted)}
+    .hosted-status.ok{color:var(--green)}
+    .hosted-status.warn{color:#ffe2a8}
+    .hosted-status.error{color:var(--red)}
+    .hosted-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}
+    .metric{border:1px solid #2c3854;border-radius:10px;background:#141b2b;padding:10px}
+    .metric .small{display:block;margin-bottom:4px}
+    .metric strong{font-size:16px;color:var(--ink)}
+    .hosted-code{width:100%;min-height:360px;border:1px solid #41517a;background:#111827;color:#dbe7ff;border-radius:10px;padding:10px;font:11px/1.45 Consolas,'Courier New',monospace;resize:vertical}
+    .hosted-list{display:flex;flex-direction:column;gap:10px}
+    .hosted-item{border:1px solid #2c3854;border-radius:10px;background:#141b2b;padding:10px}
+    .hosted-item-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:6px}
+    .hosted-item-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .status-pill{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;border:1px solid #41517a;background:#1a2235;font-size:10px;letter-spacing:.4px;text-transform:uppercase}
+    .status-pill.queued{border-color:#82613d;color:#ffe2a8;background:#241d15}
+    .status-pill.running{border-color:#4ea878;color:#d7ffe8;background:#16271f}
+    .status-pill.completed{border-color:#4e7bd6;color:#dce8ff;background:#17233d}
+    .status-pill.failed,.status-pill.cancelled{border-color:#8a4153;color:#ffd3db;background:#311822}
+    .hosted-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:10px;color:var(--muted)}
+    .log-list{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto}
+    .log-entry{border:1px solid #2c3854;border-radius:10px;background:#141b2b;padding:8px}
+    .log-entry.error{border-color:#8a4153;background:linear-gradient(180deg,#231620,#141b2b)}
+    .log-entry.warn{border-color:#82613d;background:linear-gradient(180deg,#241d15,#141b2b)}
+    @media(max-width:980px){.hosted-grid,.field-grid,.hosted-metrics{grid-template-columns:1fr}.hosted-code{min-height:280px}}
   </style>
 </head>
 <body>
@@ -229,6 +263,12 @@
   var authToken='';
   var DASHBOARD_API_BASE_STORAGE_KEY='neural-necropolis.api-base';
   var apiBase='';
+  var PROMPT_RUNNER_BASE_STORAGE_KEY='neural-necropolis.prompt-runner-base';
+  var PROMPT_RUNNER_TOKEN_STORAGE_KEY='neural-necropolis.prompt-runner-token';
+  var promptRunnerBase='';
+  var promptRunnerToken='';
+  var promptRunnerState={health:null,manifests:[],jobs:[],logs:[],selectedJobId:'',lastError:'',lastInfo:'',loading:false,lastRefreshedAt:0};
+  var promptDraft=createDefaultPromptDraft();
   var streamSource=null;
   var tileDescriptions={
     door_closed:'Closed door',
@@ -260,6 +300,20 @@
 
   function esc(v){return String(v??'').replace(/[&<>\"]/g,function(m){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m];});}
 
+  function normalizeOpenClawText(value){
+    var text=String(value??'').trim();
+    if(!text) return '';
+    text=text.replace(/\bOpenclaw\b/g,'OpenClaw');
+    while(/\bOpenClaw\s+OpenClaw\b/.test(text)){
+      text=text.replace(/\bOpenClaw\s+OpenClaw\b/g,'OpenClaw');
+    }
+    return text;
+  }
+
+  function displayHeroName(value){
+    return normalizeOpenClawText(value);
+  }
+
   function resolveDefaultApiBase(){
     try{
       if(window.location && /^https?:$/.test(window.location.protocol) && window.location.origin){
@@ -267,6 +321,66 @@
       }
     }catch(_err){}
     return 'http://127.0.0.1:3000';
+  }
+
+  function createPromptDraftSeed(){
+    return Date.now().toString(36);
+  }
+
+  function slugifyText(value,fallback){
+    var raw=String(value||'').trim().toLowerCase();
+    var slug=raw.replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    return slug || String(fallback||'prompt-draft');
+  }
+
+  function createDefaultPromptDraft(){
+    var seed=createPromptDraftSeed();
+    return {
+      manifestId:'treasure-mind-'+seed,
+      ownerId:'dashboard-local',
+      requestedBy:'dashboard-operator',
+      heroName:'Hosted Treasure Mind',
+      displayName:'Treasure Mind',
+      strategy:'prefer treasure, avoid obviously bad fights, and escape alive',
+      preferredTrait:'greedy',
+      system:'You are a Neural Necropolis hero controller. Use only the latest observation and the legal actions list. Choose exactly one legal action and never invent actions.',
+      policy:'Prioritize immediate survival first, then treasure, then safe exploration. Avoid actions that step into obviously bad monster punish windows when a safer legal alternative exists.',
+      persona:'You are cool-headed, practical, and loot-motivated.',
+      styleNotes:'Keep reasoning short and concrete. Do not narrate lore or roleplay beyond the chosen action rationale.',
+      profile:'balanced-production',
+      temperature:'0.3',
+      maxOutputTokens:'180',
+      reasoningEffort:'medium',
+      decisionTimeoutMs:'15000',
+      maxDecisionRetries:'1',
+      maxConsecutiveFallbacks:'3',
+      cooldownMs:'150'
+    };
+  }
+
+  function resolveDefaultPromptRunnerBase(){
+    try{
+      if(window.location && /^https?:$/.test(window.location.protocol) && window.location.hostname){
+        return window.location.protocol+'//'+window.location.hostname+':4010';
+      }
+    }catch(_err){}
+    return 'http://127.0.0.1:4010';
+  }
+
+  function normalizePromptRunnerBase(value){
+    var raw=String(value||'').trim();
+    if(!raw) return resolveDefaultPromptRunnerBase();
+    return raw.replace(/\/+$/,'');
+  }
+
+  function promptRunnerUrl(path){
+    var suffix=String(path||'');
+    return normalizePromptRunnerBase(promptRunnerBase)+(suffix.startsWith('/')?suffix:'/'+suffix);
+  }
+
+  function promptRunnerFetch(path,init){
+    var headers=Object.assign({},(init&&init.headers)||{},promptRunnerToken?{Authorization:'Bearer '+promptRunnerToken}:{});
+    return fetch(promptRunnerUrl(path),Object.assign({},init||{},{headers:headers}));
   }
 
   function normalizeApiBase(value){
@@ -321,6 +435,232 @@
       authToken=(window.localStorage&&localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY))||'';
     }catch(_err){
       authToken='';
+    }
+  }
+
+  function loadStoredPromptRunnerConfig(){
+    var configured='';
+    try{
+      var params=new URLSearchParams(window.location.search||'');
+      configured=(params.get('promptRunner')||params.get('promptRunnerBase')||'').trim();
+    }catch(_err){}
+    if(!configured){
+      try{
+        configured=(window.localStorage&&localStorage.getItem(PROMPT_RUNNER_BASE_STORAGE_KEY))||'';
+      }catch(_err){
+        configured='';
+      }
+    }
+    promptRunnerBase=normalizePromptRunnerBase(configured);
+    try{
+      promptRunnerToken=(window.localStorage&&localStorage.getItem(PROMPT_RUNNER_TOKEN_STORAGE_KEY))||'';
+    }catch(_err){
+      promptRunnerToken='';
+    }
+  }
+
+  function updateHostedStatus(id,message,tone){
+    var el=$(id);
+    if(!el) return;
+    el.textContent=message||'';
+    el.className='hosted-status'+(tone?' '+tone:'');
+  }
+
+  function updatePromptRunnerConnectionStatus(message,tone){
+    updateHostedStatus('promptRunnerStatus',message,tone);
+  }
+
+  function updatePromptRunnerTokenStatus(message,tone){
+    updateHostedStatus('promptRunnerTokenStatus',message,tone);
+  }
+
+  async function readJsonResponse(response){
+    var text=await response.text();
+    var data={};
+    if(text){
+      try{
+        data=JSON.parse(text);
+      }catch(_err){
+        data={message:text};
+      }
+    }
+    if(!response.ok){
+      var message=(data&&data.message)||text||response.statusText||('HTTP '+response.status);
+      if(response.status===401){
+        updatePromptRunnerTokenStatus('Prompt runner token missing or invalid.','error');
+      }
+      throw new Error(String(message));
+    }
+    return data;
+  }
+
+  async function promptRunnerFetchJson(path,init){
+    return readJsonResponse(await promptRunnerFetch(path,init));
+  }
+
+  function buildPromptManifest(draft){
+    return {
+      manifestVersion:'1.0',
+      kind:'neural-necropolis.prompt-manifest',
+      agent:{
+        displayName:String(draft.displayName||'Prompt Hero').trim(),
+        strategy:String(draft.strategy||'').trim(),
+        preferredTrait:String(draft.preferredTrait||'greedy').trim()
+      },
+      prompts:{
+        system:String(draft.system||'').trim(),
+        policy:String(draft.policy||'').trim(),
+        persona:String(draft.persona||'').trim(),
+        styleNotes:String(draft.styleNotes||'').trim()
+      },
+      model:{
+        selection:{mode:'profile',profile:String(draft.profile||'balanced-production').trim()},
+        temperature:Number(draft.temperature||0.3),
+        maxOutputTokens:Number(draft.maxOutputTokens||180),
+        reasoningEffort:String(draft.reasoningEffort||'medium').trim()
+      },
+      runner:{
+        decisionTimeoutMs:Number(draft.decisionTimeoutMs||15000),
+        maxDecisionRetries:Number(draft.maxDecisionRetries||1),
+        maxConsecutiveFallbacks:Number(draft.maxConsecutiveFallbacks||3),
+        cooldownMs:Number(draft.cooldownMs||150)
+      },
+      io:{
+        inputMode:'observation-v1',
+        outputMode:'action-index-v1',
+        requireReason:true
+      },
+      tools:{mode:'none',allowed:[]},
+      fallback:{
+        onTimeout:'wait',
+        onMalformedOutput:'wait',
+        onUnsafeOutput:'reject_turn'
+      },
+      metadata:{
+        ownerId:String(draft.ownerId||'dashboard-local').trim(),
+        createdBy:String(draft.requestedBy||'dashboard-operator').trim(),
+        revision:1,
+        labels:['dashboard','hosted-agent'],
+        notes:'Drafted from the Hosted Agents dashboard.'
+      }
+    };
+  }
+
+  function normalizePromptDraft(){
+    promptDraft.displayName=String(promptDraft.displayName||'Prompt Hero').trim()||'Prompt Hero';
+    promptDraft.manifestId=slugifyText(promptDraft.manifestId||promptDraft.displayName,'prompt-draft-'+createPromptDraftSeed());
+    promptDraft.ownerId=slugifyText(promptDraft.ownerId||'dashboard-local','dashboard-local');
+    promptDraft.requestedBy=String(promptDraft.requestedBy||'dashboard-operator').trim()||'dashboard-operator';
+    promptDraft.heroName=String(promptDraft.heroName||promptDraft.displayName).trim()||promptDraft.displayName;
+    promptDraft.strategy=String(promptDraft.strategy||'').trim();
+    promptDraft.system=String(promptDraft.system||'').trim();
+    promptDraft.policy=String(promptDraft.policy||'').trim();
+    promptDraft.persona=String(promptDraft.persona||'').trim();
+    promptDraft.styleNotes=String(promptDraft.styleNotes||'').trim();
+    promptDraft.profile=String(promptDraft.profile||'balanced-production').trim()||'balanced-production';
+    promptDraft.preferredTrait=String(promptDraft.preferredTrait||'greedy').trim()||'greedy';
+  }
+
+  function syncPromptDraftFromInputs(){
+    var fields=document.querySelectorAll('[data-prompt-field]');
+    fields.forEach(function(field){
+      var key=field.getAttribute('data-prompt-field');
+      if(!key) return;
+      promptDraft[key]=field.value;
+    });
+    normalizePromptDraft();
+  }
+
+  function populatePromptDraftInputs(){
+    var fields=document.querySelectorAll('[data-prompt-field]');
+    fields.forEach(function(field){
+      var key=field.getAttribute('data-prompt-field');
+      if(!key) return;
+      field.value=promptDraft[key]||'';
+    });
+  }
+
+  function updateManifestPreview(){
+    var preview=$('hostedManifestPreview');
+    if(!preview) return;
+    syncPromptDraftFromInputs();
+    preview.value=JSON.stringify(buildPromptManifest(promptDraft),null,2);
+  }
+
+  function formatTimestamp(value){
+    if(!value) return '-';
+    try{return new Date(value).toLocaleString();}catch(_err){return String(value);}
+  }
+
+  function preferredHostedJobId(){
+    var jobs=(promptRunnerState.jobs||[]).slice();
+    if(promptRunnerState.selectedJobId && jobs.some(function(job){ return job.id===promptRunnerState.selectedJobId; })) return promptRunnerState.selectedJobId;
+    var active=jobs.find(function(job){ return job.status==='running' || job.status==='queued'; });
+    return active ? active.id : (jobs[0]&&jobs[0].id)||'';
+  }
+
+  async function refreshHostedLogs(){
+    var jobId=preferredHostedJobId();
+    promptRunnerState.selectedJobId=jobId;
+    if(!jobId){
+      promptRunnerState.logs=[];
+      renderHostedPanelState();
+      return;
+    }
+    try{
+      var logs=await promptRunnerFetchJson('/jobs/'+encodeURIComponent(jobId)+'/logs');
+      promptRunnerState.logs=Array.isArray(logs)?logs:[];
+      renderHostedPanelState();
+    }catch(err){
+      promptRunnerState.logs=[];
+      promptRunnerState.lastError='Could not load logs: '+(err instanceof Error?err.message:String(err));
+      renderHostedPanelState();
+    }
+  }
+
+  async function refreshHostedState(options){
+    var silent=Boolean(options&&options.silent);
+    promptRunnerState.loading=true;
+    if(!silent) promptRunnerState.lastInfo='Refreshing prompt-runner state...';
+    renderHostedPanelState();
+    try{
+      var health=await promptRunnerFetchJson('/health');
+      var manifests=[];
+      var jobs=[];
+      try{
+        var results=await Promise.all([
+          promptRunnerFetchJson('/manifests'),
+          promptRunnerFetchJson('/jobs')
+        ]);
+        manifests=Array.isArray(results[0])?results[0]:[];
+        jobs=Array.isArray(results[1])?results[1]:[];
+        promptRunnerState.lastError='';
+        updatePromptRunnerTokenStatus(promptRunnerToken?'Prompt runner token loaded for manifest and job actions.':'Prompt runner is in open mode, or a token is not required.','ok');
+      }catch(err){
+        manifests=[];
+        jobs=[];
+        promptRunnerState.lastError='Prompt runner is reachable, but manifest/job access failed: '+(err instanceof Error?err.message:String(err));
+      }
+      promptRunnerState.health=health;
+      promptRunnerState.manifests=manifests.sort(function(a,b){ return String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')); });
+      promptRunnerState.jobs=jobs.sort(function(a,b){ return String(b.createdAt||'').localeCompare(String(a.createdAt||'')); });
+      promptRunnerState.selectedJobId=preferredHostedJobId();
+      promptRunnerState.lastRefreshedAt=Date.now();
+      promptRunnerState.lastInfo='Prompt runner connected at '+promptRunnerBase;
+      promptRunnerState.loading=false;
+      renderHostedPanelState();
+      if(promptRunnerState.selectedJobId){
+        await refreshHostedLogs();
+      }
+      return;
+    }catch(err){
+      promptRunnerState.health=null;
+      promptRunnerState.manifests=[];
+      promptRunnerState.jobs=[];
+      promptRunnerState.logs=[];
+      promptRunnerState.lastError='Could not reach prompt runner: '+(err instanceof Error?err.message:String(err));
+      promptRunnerState.loading=false;
+      renderHostedPanelState();
     }
   }
 
@@ -608,9 +948,10 @@
 
   var heroBotDrawers={berserker:drawBerserker,explorer:drawExplorer,treasure:drawTreasureHunter,aibot:drawAIBot,generic:drawGenericBot};
   function getBotType(hr){
-    if(hr.name==='Berserker') return 'berserker';
-    if(hr.name==='Explorer') return 'explorer';
-    if(hr.name==='TreasureHunter') return 'treasure';
+    var heroName=displayHeroName(hr.name);
+    if(heroName==='Berserker') return 'berserker';
+    if(heroName==='Explorer') return 'explorer';
+    if(heroName==='TreasureHunter') return 'treasure';
     if((hr.strategy||'').startsWith('LLM-powered')) return 'aibot';
     return 'generic';
   }
@@ -938,7 +1279,7 @@
       var hr=snap.heroes[i];
       if(hr.position.x!==mapX||hr.position.y!==mapY) continue;
       var alive=hr.status==='alive';
-      parts.push('<span class="tt-name">'+(alive?'\u2694\ufe0f ':'\u2620\ufe0f ')+esc(hr.name)+'</span>\\n'
+      parts.push('<span class="tt-name">'+(alive?'\u2694\ufe0f ':'\u2620\ufe0f ')+esc(displayHeroName(hr.name))+'</span>\\n'
         +'HP '+hr.stats.hp+'/'+hr.stats.maxHp+' \u00b7 '+hr.score+' pts'+(isInactiveHero(hr)?' \u00b7 inactive':'')+'\\n'
         +'<span class="tt-sub">'+esc(hr.trait)+'</span>\\n'
         +'<span class="tt-sub">'+esc(hr.strategy||'')+'</span>');
@@ -1163,11 +1504,11 @@
   }
 
   function renderTabs(snap){
-    const ids=['overview','board','completed','settings',...(snap.heroes||[]).map(h=>h.id)];
+    const ids=['overview','board','completed','hosted','settings',...(snap.heroes||[]).map(h=>h.id)];
     if(!ids.includes(selectedTab)) selectedTab='overview';
     $('tabs').innerHTML=ids.map(id=>{
       const hero=(snap.heroes||[]).find(h=>h.id===id);
-      const label=id==='overview'?'Overview':id==='board'?'Board':id==='completed'?'Completed':id==='settings'?'⚙ Settings':hero.name;
+      const label=id==='overview'?'Overview':id==='board'?'Board':id==='completed'?'Completed':id==='hosted'?'Hosted Agents':id==='settings'?'⚙ Settings':displayHeroName(hero.name);
       return '<button class="tab '+(selectedTab===id?'active':'')+'" data-tab="'+esc(id)+'">'+esc(label)+'</button>';
     }).join('');
     Array.from($('tabs').querySelectorAll('[data-tab]')).forEach(btn=>btn.addEventListener('click',()=>{
@@ -1179,7 +1520,7 @@
   function renderBoardPanel(snap){
     const heroes=snap.heroes||[];
     const statusLabel=snap.lobby?.status === 'running' ? 'running' : snap.lobby?.status === 'completed' ? 'completed' : 'staged';
-    const rows=heroes.map(h=>'<div class="row"><div><div class="name '+heroClass(h)+'">'+esc(h.name)+'</div><div class="trait">'+esc(h.trait)+' · '+esc(h.strategy)+'</div></div><div><div class="small">Status '+esc(snap.turnState?.started ? heroSessionLabel(h,h.status) : heroSessionLabel(h,statusLabel))+'</div><div class="small">HP '+h.stats.hp+'/'+h.stats.maxHp+' · Pos ('+h.position.x+','+h.position.y+')</div></div></div>').join('')||'<div class="small">No bots attached yet.</div>';
+    const rows=heroes.map(h=>'<div class="row"><div><div class="name '+heroClass(h)+'">'+esc(displayHeroName(h.name))+'</div><div class="trait">'+esc(h.trait)+' · '+esc(h.strategy)+'</div></div><div><div class="small">Status '+esc(snap.turnState?.started ? heroSessionLabel(h,h.status) : heroSessionLabel(h,statusLabel))+'</div><div class="small">HP '+h.stats.hp+'/'+h.stats.maxHp+' · Pos ('+h.position.x+','+h.position.y+')</div></div></div>').join('')||'<div class="small">No bots attached yet.</div>';
     const required=snap.lobby?.requiredHeroes;
     const summary=required===null
       ? 'Attached '+(snap.lobby?.attachedHeroes ?? heroes.length)+' bots.'
@@ -1208,7 +1549,7 @@
       .map(m=>({
         sortTurn:m.turn ?? 0,
         kind:'bot',
-        who:m.heroName,
+        who:displayHeroName(m.heroName),
         label:'Turn '+m.turn,
         text:m.message
       }));
@@ -1225,7 +1566,7 @@
   }
 
   function formatFeedText(entry){
-    var text=esc(entry.text);
+    var text=esc(normalizeOpenClawText(entry.text));
     text=text.replace(/(\b\d+\s*dmg\b)/g,'<span class="feed-pill dmg">$1</span>');
     text=text.replace(/(HP\s+\d+\/\d+)/g,'<span class="feed-pill hp">$1</span>');
     if(entry.kind==='combat'){
@@ -1251,7 +1592,7 @@
   function renderSidePanels(snap){
     const board=selectedBoardSummary || {};
     const focusHero=(snap.heroes||[]).find(h=>h.id===selectedTab) || null;
-    const focusLabel=focusHero ? focusHero.name : selectedTab==='completed' ? 'Completed Boards' : selectedTab==='board' ? 'Board View' : 'All Bots';
+    const focusLabel=focusHero ? displayHeroName(focusHero.name) : selectedTab==='completed' ? 'Completed Boards' : selectedTab==='board' ? 'Board View' : 'All Bots';
     const livingHeroes=(snap.heroes||[]).filter(function(h){ return h.status!=='dead' && h.status!=='escaped'; }).length;
     const inactiveHeroes=(snap.heroes||[]).filter(function(h){ return isInactiveHero(h); }).length;
     const monsterCount=(snap.monsters||[]).length;
@@ -1265,17 +1606,17 @@
       '<div>Seed: '+esc(snap.seed || '-')+'</div>',
       (snap.lobby?.completionReason?'<div class="small">'+esc(snap.lobby.completionReason)+'</div>':'')
     ].join('');
-    const leaderboard=(snap.leaderboard||[]).slice(0,8).map((h,i)=>'<div class="row"><span>#'+(i+1)+' <span class="name '+(h.status==='dead'?'dead':h.status==='escaped'?'escaped':'')+'">'+esc(h.heroName)+'</span></span><span class="score">'+h.totalScore+'</span></div>').join('')||'<div class="small">No scores yet.</div>';
+    const leaderboard=(snap.leaderboard||[]).slice(0,8).map((h,i)=>'<div class="row"><span>#'+(i+1)+' <span class="name '+(h.status==='dead'?'dead':h.status==='escaped'?'escaped':'')+'">'+esc(displayHeroName(h.heroName))+'</span></span><span class="score">'+h.totalScore+'</span></div>').join('')||'<div class="small">No scores yet.</div>';
     const sideFeed=buildFeedEntries(snap).slice(0,16);
     const feedSummary=focusHero
-      ? '<div class="small">Filtered to '+esc(focusHero.name)+(isInactiveHero(focusHero)?' · inactive session.':'')+'</div>'
+      ? '<div class="small">Filtered to '+esc(displayHeroName(focusHero.name))+(isInactiveHero(focusHero)?' · inactive session.':'')+'</div>'
       : selectedTab==='completed'
         ? '<div class="small">Showing recent messages from the current board while the drawer is on completed boards.</div>'
         : '<div class="small">Live engine and bot messages for the active board. Select a bot tab to narrow this list.</div>';
 
     $('leftRailTop').innerHTML='<div class="hero-lines">'+boardDetails+'</div>';
     $('leftRailBottom').innerHTML='<div class="list">'+leaderboard+'</div>';
-    $('feedPanelTitle').textContent=focusHero ? focusHero.name.toUpperCase()+' FEED' : 'LIVE FEED';
+    $('feedPanelTitle').textContent=focusHero ? displayHeroName(focusHero.name).toUpperCase()+' FEED' : 'LIVE FEED';
     $('rightRailBottom').innerHTML='<div class="feed-frame">'
       +feedSummary
       +'<div class="feed-list">'
@@ -1294,7 +1635,7 @@
       +'</div></div></div>';
     var cards=(completedBoards||[]).map(function(board){
       var top=(board.topLeaderboard||[]).map(function(h,idx){
-        return '<div class="row"><span>#'+(idx+1)+' '+esc(h.heroName)+'</span><span class="score">'+esc(String(h.totalScore))+'</span></div>';
+        return '<div class="row"><span>#'+(idx+1)+' '+esc(displayHeroName(h.heroName))+'</span><span class="score">'+esc(String(h.totalScore))+'</span></div>';
       }).join('') || '<div class="small">No leaderboard data.</div>';
       return '<div class="card"><h2>'+esc(board.boardName||board.boardId)+'</h2>'
         +'<div class="hero-lines">'
@@ -1311,8 +1652,8 @@
   }
 
   function renderOverview(snap){
-    const heroes=(snap.heroes||[]).map(h=>'<div class="row"><div><div class="name '+heroClass(h)+'">'+esc(h.name)+'</div><div class="trait">'+esc(h.trait)+'</div></div><div><div class="score">'+h.score+' pts</div><div class="small">HP '+h.stats.hp+'/'+h.stats.maxHp+' | Kills '+h.kills+' | Explored '+h.tilesExplored+'</div><div class="small">'+esc(isInactiveHero(h)?'Inactive session':h.lastAction)+'</div></div></div>').join('')||'<div class="small">No heroes attached.</div>';
-    const leaderboard=(snap.leaderboard||[]).map((h,i)=>'<div class="row"><span>#'+(i+1)+' <span class="name '+(h.status==='dead'?'dead':h.status==='escaped'?'escaped':'')+'">'+esc(h.heroName)+'</span></span><span class="score">'+h.totalScore+'</span></div>').join('')||'<div class="small">-</div>';
+    const heroes=(snap.heroes||[]).map(h=>'<div class="row"><div><div class="name '+heroClass(h)+'">'+esc(displayHeroName(h.name))+'</div><div class="trait">'+esc(h.trait)+'</div></div><div><div class="score">'+h.score+' pts</div><div class="small">HP '+h.stats.hp+'/'+h.stats.maxHp+' | Kills '+h.kills+' | Explored '+h.tilesExplored+'</div><div class="small">'+esc(isInactiveHero(h)?'Inactive session':h.lastAction)+'</div></div></div>').join('')||'<div class="small">No heroes attached.</div>';
+    const leaderboard=(snap.leaderboard||[]).map((h,i)=>'<div class="row"><span>#'+(i+1)+' <span class="name '+(h.status==='dead'?'dead':h.status==='escaped'?'escaped':'')+'">'+esc(displayHeroName(h.heroName))+'</span></span><span class="score">'+h.totalScore+'</span></div>').join('')||'<div class="small">-</div>';
     const monsters=(snap.monsters||[])
       .slice(0,14)
       .map(m=>'<div class="row"><span style="text-transform:capitalize">'+esc(m.kind)+' · '+esc(m.name)+'</span><span class="small">'+esc(m.slug||m.id||'-')+'</span></div>')
@@ -1326,13 +1667,300 @@
       +'</div>';
   }
 
+  function renderHostedPanelShell(){
+    return '<div class="hosted-grid">'
+      +'<div class="card hosted-span"><h2>HOSTED AGENTS</h2><div class="small">Draft a prompt manifest, store it in prompt runner, launch a hosted job, and inspect quota or worker failures without leaving the dashboard.</div></div>'
+      +'<div class="card"><h2>PROMPT RUNNER</h2><div class="field-grid">'
+      +'<label class="field"><span>Control Plane URL</span><input id="promptRunnerBaseInput" type="url" placeholder="http://127.0.0.1:4010" autocomplete="off" /></label>'
+      +'<label class="field"><span>Runner Admin Token</span><input id="promptRunnerTokenInput" type="password" placeholder="Optional bearer token" autocomplete="off" /></label>'
+      +'</div><div class="hosted-toolbar">'
+      +'<button id="promptRunnerSave" type="button">Save Connection</button>'
+      +'<button id="promptRunnerRefresh" type="button">Refresh State</button>'
+      +'</div><div id="promptRunnerStatus" class="hosted-status" style="margin-top:10px"></div><div id="promptRunnerTokenStatus" class="hosted-status" style="margin-top:6px"></div><div id="promptRunnerMetrics" class="hosted-metrics"></div></div>'
+      +'<div class="card"><h2>PROMPT DRAFT</h2><div class="field-grid">'
+      +'<label class="field"><span>Manifest Id</span><input data-prompt-field="manifestId" type="text" autocomplete="off" /></label>'
+      +'<label class="field"><span>Owner Id</span><input data-prompt-field="ownerId" type="text" autocomplete="off" /></label>'
+      +'<label class="field"><span>Display Name</span><input data-prompt-field="displayName" type="text" autocomplete="off" /></label>'
+      +'<label class="field"><span>Hero Name</span><input data-prompt-field="heroName" type="text" autocomplete="off" /></label>'
+      +'<label class="field"><span>Preferred Trait</span><select data-prompt-field="preferredTrait"><option value="aggressive">aggressive</option><option value="cautious">cautious</option><option value="greedy">greedy</option><option value="curious">curious</option><option value="resilient">resilient</option></select></label>'
+      +'<label class="field"><span>Model Profile</span><input data-prompt-field="profile" type="text" autocomplete="off" /></label>'
+      +'<label class="field"><span>Temperature</span><input data-prompt-field="temperature" type="number" step="0.1" min="0" max="2" /></label>'
+      +'<label class="field"><span>Max Output Tokens</span><input data-prompt-field="maxOutputTokens" type="number" min="1" step="1" /></label>'
+      +'<label class="field"><span>Reasoning Effort</span><select data-prompt-field="reasoningEffort"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>'
+      +'<label class="field"><span>Requested By</span><input data-prompt-field="requestedBy" type="text" autocomplete="off" /></label>'
+      +'<label class="field"><span>Decision Timeout Ms</span><input data-prompt-field="decisionTimeoutMs" type="number" min="100" step="50" /></label>'
+      +'<label class="field"><span>Max Decision Retries</span><input data-prompt-field="maxDecisionRetries" type="number" min="0" step="1" /></label>'
+      +'<label class="field"><span>Max Consecutive Fallbacks</span><input data-prompt-field="maxConsecutiveFallbacks" type="number" min="1" step="1" /></label>'
+      +'<label class="field"><span>Cooldown Ms</span><input data-prompt-field="cooldownMs" type="number" min="0" step="10" /></label>'
+      +'<label class="field full"><span>Strategy</span><textarea data-prompt-field="strategy"></textarea></label>'
+      +'<label class="field full"><span>System Prompt</span><textarea data-prompt-field="system"></textarea></label>'
+      +'<label class="field full"><span>Policy Prompt</span><textarea data-prompt-field="policy"></textarea></label>'
+      +'<label class="field full compact"><span>Persona</span><textarea data-prompt-field="persona"></textarea></label>'
+      +'<label class="field full compact"><span>Style Notes</span><textarea data-prompt-field="styleNotes"></textarea></label>'
+      +'</div><div class="hosted-toolbar">'
+      +'<button id="promptDraftReset" type="button">Reset Draft</button>'
+      +'<button id="promptDraftStore" type="button">Store Manifest</button>'
+      +'<button id="promptDraftLaunch" class="btn-primary" type="button">Launch Hosted Agent</button>'
+      +'</div><div id="promptDraftStatus" class="hosted-status" style="margin-top:10px"></div></div>'
+      +'<div class="card hosted-span"><h2>MANIFEST PREVIEW</h2><textarea id="hostedManifestPreview" class="hosted-code" readonly></textarea></div>'
+      +'<div class="card"><h2>HOSTED JOBS</h2><div id="hostedJobsList" class="hosted-list"></div></div>'
+      +'<div class="card"><h2>STORED MANIFESTS</h2><div id="hostedManifestList" class="hosted-list"></div></div>'
+      +'<div class="card hosted-span"><h2>JOB LOGS</h2><div id="hostedLogsMeta" class="small" style="margin-bottom:8px"></div><div id="hostedLogsList" class="log-list"></div></div>'
+      +'</div>';
+  }
+
+  function renderHostedMetrics(){
+    var el=$('promptRunnerMetrics');
+    if(!el) return;
+    if(!promptRunnerState.health){
+      el.innerHTML='<div class="metric"><span class="small">Runner</span><strong>offline</strong></div>';
+      return;
+    }
+    el.innerHTML=''
+      +'<div class="metric"><span class="small">Runner</span><strong>online</strong></div>'
+      +'<div class="metric"><span class="small">Manifests</span><strong>'+esc(String(promptRunnerState.health.manifests||0))+'</strong></div>'
+      +'<div class="metric"><span class="small">Jobs</span><strong>'+esc(String(promptRunnerState.health.jobs||0))+'</strong></div>'
+      +'<div class="metric"><span class="small">Active Jobs</span><strong>'+esc(String(promptRunnerState.health.activeJobs||0))+'</strong></div>';
+  }
+
+  function renderHostedJobs(){
+    var el=$('hostedJobsList');
+    if(!el) return;
+    var jobs=promptRunnerState.jobs||[];
+    if(!jobs.length){
+      el.innerHTML='<div class="small">No hosted jobs yet. Store a manifest and launch a hosted agent from this tab.</div>';
+      return;
+    }
+    el.innerHTML=jobs.map(function(job){
+      var heroName=job.hero&&job.hero.name?job.hero.name:job.id;
+      var status=String(job.status||'queued');
+      return '<div class="hosted-item">'
+        +'<div class="hosted-item-head"><div><div class="name">'+esc(heroName)+'</div><div class="small">Manifest '+esc(job.manifestId)+' · Owner '+esc(job.ownerId)+'</div></div><span class="status-pill '+esc(status)+'">'+esc(status)+'</span></div>'
+        +'<div class="hosted-meta"><span>Job '+esc(job.id)+'</span><span>Created '+esc(formatTimestamp(job.createdAt))+'</span><span>Turn '+esc(String(job.lastTurn||'-'))+'</span><span>Board '+esc(job.lastBoardId||'-')+'</span>'+(job.failureMessage?'<span>'+esc(job.failureMessage)+'</span>':'')+'</div>'
+        +'<div class="hosted-toolbar"><button type="button" data-hosted-action="logs" data-job-id="'+esc(job.id)+'">View Logs</button>'
+        +((status==='queued'||status==='running')?'<button type="button" class="btn-danger" data-hosted-action="cancel" data-job-id="'+esc(job.id)+'">Cancel Job</button>':'')
+        +'</div></div>';
+    }).join('');
+    el.querySelectorAll('[data-hosted-action="logs"]').forEach(function(button){
+      button.addEventListener('click',function(){
+        promptRunnerState.selectedJobId=button.getAttribute('data-job-id')||'';
+        promptRunnerState.lastInfo='Loading logs for '+promptRunnerState.selectedJobId+'...';
+        renderHostedPanelState();
+        refreshHostedLogs();
+      });
+    });
+    el.querySelectorAll('[data-hosted-action="cancel"]').forEach(function(button){
+      button.addEventListener('click',function(){
+        var jobId=button.getAttribute('data-job-id')||'';
+        if(jobId) cancelHostedJob(jobId);
+      });
+    });
+  }
+
+  function renderHostedManifests(){
+    var el=$('hostedManifestList');
+    if(!el) return;
+    var manifests=promptRunnerState.manifests||[];
+    if(!manifests.length){
+      el.innerHTML='<div class="small">No stored manifests visible yet.</div>';
+      return;
+    }
+    el.innerHTML=manifests.map(function(record){
+      return '<div class="hosted-item"><div class="hosted-item-head"><div><div class="name">'+esc(record.displayName||record.id)+'</div><div class="small">Manifest '+esc(record.id)+' · Owner '+esc(record.ownerId)+'</div></div><span class="status-pill completed">rev '+esc(String(record.revision||1))+'</span></div><div class="hosted-meta"><span>Created '+esc(formatTimestamp(record.createdAt))+'</span><span>Updated '+esc(formatTimestamp(record.updatedAt))+'</span></div></div>';
+    }).join('');
+  }
+
+  function renderHostedLogs(){
+    var meta=$('hostedLogsMeta');
+    var el=$('hostedLogsList');
+    if(!meta||!el) return;
+    if(!promptRunnerState.selectedJobId){
+      meta.textContent='Select a hosted job to inspect its worker log.';
+      el.innerHTML='<div class="small">No job selected.</div>';
+      return;
+    }
+    meta.textContent='Showing '+(promptRunnerState.logs||[]).length+' log entries for '+promptRunnerState.selectedJobId+'.';
+    if(!(promptRunnerState.logs||[]).length){
+      el.innerHTML='<div class="small">No logs returned yet for this job.</div>';
+      return;
+    }
+    el.innerHTML=promptRunnerState.logs.slice(-40).reverse().map(function(entry){
+      var level=String(entry.level||'info');
+      return '<div class="log-entry '+esc(level)+'"><div class="msg-meta"><span>'+esc(level.toUpperCase())+'</span><span>'+esc(formatTimestamp(entry.timestamp))+'</span></div><div class="feed-text">'+esc(entry.message||'')+'</div>'+(entry.data?'<pre class="small" style="margin-top:8px;white-space:pre-wrap">'+esc(JSON.stringify(entry.data,null,2))+'</pre>':'')+'</div>';
+    }).join('');
+  }
+
+  function renderHostedPanelState(){
+    if(selectedTab!=='hosted') return;
+    renderHostedMetrics();
+    renderHostedJobs();
+    renderHostedManifests();
+    renderHostedLogs();
+    updateManifestPreview();
+    if(promptRunnerState.loading){
+      updatePromptRunnerConnectionStatus(promptRunnerState.lastInfo||'Refreshing prompt-runner state...','warn');
+    } else if(promptRunnerState.lastError){
+      updatePromptRunnerConnectionStatus(promptRunnerState.lastError,'error');
+    } else if(promptRunnerState.health){
+      updatePromptRunnerConnectionStatus((promptRunnerState.lastInfo||'Prompt runner connected.')+(promptRunnerState.lastRefreshedAt?' Last refresh '+formatTimestamp(promptRunnerState.lastRefreshedAt)+'.':''),'ok');
+    } else {
+      updatePromptRunnerConnectionStatus('Set the prompt-runner URL and refresh to load hosted state.','');
+    }
+    if(!promptRunnerToken){
+      updatePromptRunnerTokenStatus('No prompt-runner token saved in this browser. This is fine when the control plane runs in open mode.','');
+    }
+  }
+
+  async function storeHostedManifest(){
+    syncPromptDraftFromInputs();
+    if(!promptDraft.strategy||!promptDraft.system||!promptDraft.policy){
+      updateHostedStatus('promptDraftStatus','Strategy, system prompt, and policy prompt are required.','error');
+      return null;
+    }
+    updateHostedStatus('promptDraftStatus','Storing manifest '+promptDraft.manifestId+'...','warn');
+    try{
+      var manifestRecord=await promptRunnerFetchJson('/manifests',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          manifestId:promptDraft.manifestId,
+          ownerId:promptDraft.ownerId,
+          manifest:buildPromptManifest(promptDraft)
+        })
+      });
+      updateHostedStatus('promptDraftStatus','Stored manifest '+String(manifestRecord.id||promptDraft.manifestId)+'.','ok');
+      promptRunnerState.lastInfo='Stored manifest '+String(manifestRecord.id||promptDraft.manifestId)+'.';
+      await refreshHostedState({silent:true});
+      return manifestRecord;
+    }catch(err){
+      updateHostedStatus('promptDraftStatus','Manifest store failed: '+(err instanceof Error?err.message:String(err)),'error');
+      promptRunnerState.lastError='Manifest store failed: '+(err instanceof Error?err.message:String(err));
+      renderHostedPanelState();
+      return null;
+    }
+  }
+
+  async function launchHostedAgent(){
+    var manifestRecord=await storeHostedManifest();
+    if(!manifestRecord) return;
+    updateHostedStatus('promptDraftStatus','Launching hosted agent for '+promptDraft.heroName+'...','warn');
+    try{
+      var job=await promptRunnerFetchJson('/jobs',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          manifestId:String(manifestRecord.id||promptDraft.manifestId),
+          connection:{baseUrl:apiBase},
+          hero:{name:promptDraft.heroName},
+          requestedBy:promptDraft.requestedBy
+        })
+      });
+      updateHostedStatus('promptDraftStatus','Hosted job '+String(job.id||'')+' created for '+promptDraft.heroName+'.','ok');
+      promptRunnerState.lastInfo='Hosted job '+String(job.id||'')+' created.';
+      promptRunnerState.selectedJobId=String(job.id||'');
+      await refreshHostedState({silent:true});
+    }catch(err){
+      updateHostedStatus('promptDraftStatus','Hosted launch failed: '+(err instanceof Error?err.message:String(err)),'error');
+      promptRunnerState.lastError='Hosted launch failed: '+(err instanceof Error?err.message:String(err));
+      renderHostedPanelState();
+    }
+  }
+
+  async function cancelHostedJob(jobId){
+    promptRunnerState.lastInfo='Cancelling job '+jobId+'...';
+    renderHostedPanelState();
+    try{
+      await promptRunnerFetchJson('/jobs/'+encodeURIComponent(jobId)+'/cancel',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'}
+      });
+      promptRunnerState.lastInfo='Cancelled job '+jobId+'.';
+      promptRunnerState.lastError='';
+      await refreshHostedState({silent:true});
+    }catch(err){
+      promptRunnerState.lastError='Cancel failed for '+jobId+': '+(err instanceof Error?err.message:String(err));
+      renderHostedPanelState();
+    }
+  }
+
+  function bindHostedPanel(){
+    var root=$('tabContent');
+    if(!root) return;
+    if(root.dataset.hostedBound==='1'){
+      renderHostedPanelState();
+      return;
+    }
+    root.dataset.hostedBound='1';
+    var baseInput=$('promptRunnerBaseInput');
+    var tokenInput=$('promptRunnerTokenInput');
+    if(baseInput) baseInput.value=promptRunnerBase;
+    if(tokenInput) tokenInput.value=promptRunnerToken;
+    populatePromptDraftInputs();
+    updateManifestPreview();
+    root.querySelectorAll('[data-prompt-field]').forEach(function(field){
+      field.addEventListener('input',function(){
+        syncPromptDraftFromInputs();
+        updateManifestPreview();
+      });
+    });
+    var save=$('promptRunnerSave');
+    if(save){
+      save.addEventListener('click',function(){
+        promptRunnerBase=normalizePromptRunnerBase(baseInput?baseInput.value:'');
+        promptRunnerToken=String(tokenInput?tokenInput.value:'').trim();
+        try{
+          if(window.localStorage){
+            localStorage.setItem(PROMPT_RUNNER_BASE_STORAGE_KEY,promptRunnerBase);
+            if(promptRunnerToken){
+              localStorage.setItem(PROMPT_RUNNER_TOKEN_STORAGE_KEY,promptRunnerToken);
+            }else{
+              localStorage.removeItem(PROMPT_RUNNER_TOKEN_STORAGE_KEY);
+            }
+          }
+        }catch(_err){}
+        promptRunnerState.lastInfo='Saved prompt-runner connection settings.';
+        updatePromptRunnerConnectionStatus('Saved prompt-runner URL: '+promptRunnerBase,'ok');
+        updatePromptRunnerTokenStatus(promptRunnerToken?'Prompt runner token saved locally in this browser.':'Prompt runner token cleared for open-mode usage.',promptRunnerToken?'ok':'');
+      });
+    }
+    var refresh=$('promptRunnerRefresh');
+    if(refresh){
+      refresh.addEventListener('click',function(){
+        refreshHostedState({silent:false});
+      });
+    }
+    var reset=$('promptDraftReset');
+    if(reset){
+      reset.addEventListener('click',function(){
+        promptDraft=createDefaultPromptDraft();
+        populatePromptDraftInputs();
+        updateManifestPreview();
+        updateHostedStatus('promptDraftStatus','Draft reset to the example hosted prompt template.','ok');
+      });
+    }
+    var store=$('promptDraftStore');
+    if(store){
+      store.addEventListener('click',function(){
+        storeHostedManifest();
+      });
+    }
+    var launch=$('promptDraftLaunch');
+    if(launch){
+      launch.addEventListener('click',function(){
+        launchHostedAgent();
+      });
+    }
+    renderHostedPanelState();
+    refreshHostedState({silent:false});
+  }
+
   function renderHeroPanel(hero,snap){
     const gear=[hero.equipment.weapon,hero.equipment.armor,hero.equipment.accessory].filter(Boolean).map(g=>'<span class="pill">'+esc(g.name)+'</span>').join('')||'<span class="small">No gear</span>';
     const effects=(hero.effects||[]).map(e=>'<span class="pill">'+esc(e.kind)+' ('+e.turnsRemaining+'t)</span>').join('')||'<span class="small">No effects</span>';
     const inventory=(hero.inventory||[]).map(i=>'<span class="pill">'+esc(i.name)+'</span>').join('')||'<span class="small">Inventory empty</span>';
     const feed=buildFeedEntries(snap).slice(0,20);
     return '<div class="hero-grid">'
-      +'<div class="card"><h2>'+esc(hero.name).toUpperCase()+(isInactiveHero(hero)?' · INACTIVE':'')+'</h2><div class="hero-lines">'
+      +'<div class="card"><h2>'+esc(displayHeroName(hero.name)).toUpperCase()+(isInactiveHero(hero)?' · INACTIVE':'')+'</h2><div class="hero-lines">'
       +'<div><span class="trait">'+esc(hero.trait)+'</span></div>'
       +'<div>Position: ('+hero.position.x+', '+hero.position.y+')</div>'
       +'<div>HP '+hero.stats.hp+'/'+hero.stats.maxHp+' | ATK '+hero.stats.attack+' DEF '+hero.stats.defense+' SPD '+hero.stats.speed+' PER '+hero.stats.perception+'</div>'
@@ -1342,7 +1970,7 @@
       +'<div class="small">'+esc(hero.strategy)+'</div>'
       +'</div></div>'
       +'<div class="card"><h2>LOADOUT</h2><div class="hero-lines"><div><div class="small">Gear</div>'+gear+'</div><div><div class="small">Effects</div>'+effects+'</div><div><div class="small">Inventory</div>'+inventory+'</div></div></div>'
-        +'<div class="card" style="grid-column:1 / -1;"><h2>BOT FEED</h2><div class="small" style="margin-bottom:8px">Recent engine and bot messages for '+esc(hero.name)+'.</div><div class="feed-list">'
+        +'<div class="card" style="grid-column:1 / -1;"><h2>BOT FEED</h2><div class="small" style="margin-bottom:8px">Recent engine and bot messages for '+esc(displayHeroName(hero.name))+'.</div><div class="feed-list">'
         +renderFeedItems(feed,'No bot-specific feed entries yet.')
         +'</div></div>'
       +'</div>';
@@ -1461,21 +2089,33 @@
     renderToggle(snap);
     renderTabs(snap);
     const hero=(snap.heroes||[]).find(h=>h.id===selectedTab);
-    const tabMarkup=selectedTab==='overview'
-      ? renderOverview(snap)
-      : selectedTab==='board'
-        ? renderBoardPanel(snap)
-        : selectedTab==='completed'
-          ? renderCompletedPanel()
-          : selectedTab==='settings'
-            ? renderSettingsPanel(snap)
-        : hero
-          ? renderHeroPanel(hero,snap)
-          : renderOverview(snap);
-    $('tabContent').innerHTML=tabMarkup;
+    const tabContent=$('tabContent');
+    if(selectedTab==='hosted'){
+      if(tabContent.dataset.panel!=='hosted'){
+        tabContent.innerHTML=renderHostedPanelShell();
+        tabContent.dataset.panel='hosted';
+        tabContent.dataset.hostedBound='0';
+      }
+    }else{
+      tabContent.dataset.panel='';
+      tabContent.dataset.hostedBound='0';
+      const tabMarkup=selectedTab==='overview'
+        ? renderOverview(snap)
+        : selectedTab==='board'
+          ? renderBoardPanel(snap)
+          : selectedTab==='completed'
+            ? renderCompletedPanel()
+            : selectedTab==='settings'
+              ? renderSettingsPanel(snap)
+          : hero
+            ? renderHeroPanel(hero,snap)
+            : renderOverview(snap);
+      tabContent.innerHTML=tabMarkup;
+    }
     renderSidePanels(snap);
     if(selectedTab==='completed') bindCompletedPager();
     if(selectedTab==='settings') bindSettingsPanel();
+    if(selectedTab==='hosted') bindHostedPanel();
     try{
       renderMap(snap);
     }catch(err){
@@ -1620,6 +2260,7 @@
 
   async function bootstrap(){
     loadStoredApiBase();
+    loadStoredPromptRunnerConfig();
     loadStoredAdminToken();
     try{
       const response=await apiFetch('/api/dashboard');
@@ -1639,6 +2280,9 @@
     connectStream();
     setInterval(pollBoards, 5000);
     setInterval(pollCompletedBoards, 5000);
+    setInterval(function(){
+      if(selectedTab==='hosted') refreshHostedState({silent:true});
+    },10000);
   }
 
   setInterval(()=>{

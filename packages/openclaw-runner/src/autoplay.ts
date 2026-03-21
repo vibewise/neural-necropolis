@@ -148,6 +148,18 @@ function titleCaseSlug(slug: string): string {
     .join(" ");
 }
 
+function formatOpenClawLabel(slug: string): string {
+  return titleCaseSlug(slug).replace(/\bOpenclaw\b/g, "OpenClaw");
+}
+
+function buildDefaultHeroName(slug: string): string {
+  const label = formatOpenClawLabel(slug);
+  if (/^openclaw(?:$|[-_])/i.test(slug)) {
+    return label;
+  }
+  return `OpenClaw ${label}`;
+}
+
 function parseTimeoutSeconds(raw: string | undefined): number {
   const parsed = Number.parseInt(raw ?? "", 10);
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_TIMEOUT_SECONDS;
@@ -201,7 +213,7 @@ function buildWorkerConfig(
     baseUrl: getStringOption(options, "base-url"),
     session,
     slug,
-    name: getStringOption(options, "name") ?? `OpenClaw ${titleCaseSlug(slug)}`,
+    name: getStringOption(options, "name") ?? buildDefaultHeroName(slug),
     heroId,
     persona,
     trait: preset.trait,

@@ -118,6 +118,12 @@ async function handleRequest(
   paths: RunnerPaths,
 ): Promise<void> {
   const method = req.method ?? "GET";
+  setCorsHeaders(res);
+  if (method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   const url = new URL(
     req.url ?? "/",
     `http://${req.headers.host ?? "localhost"}`,
@@ -535,6 +541,12 @@ function sendJson(
 ): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(`${JSON.stringify(body, null, 2)}\n`);
+}
+
+function setCorsHeaders(res: http.ServerResponse): void {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
