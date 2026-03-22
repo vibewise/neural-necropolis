@@ -17,8 +17,11 @@ This file is command-first. It answers: “I already know which client path I wa
 Use the other docs like this:
 
 - [START_HERE.md](START_HERE.md): the default local flow and component map
-- [PROMPT_RUNNER_DEMO.md](PROMPT_RUNNER_DEMO.md): hosted prompt-agent demo
-- [DASHBOARD_STANDALONE.md](DASHBOARD_STANDALONE.md): optional separate UI hosting
+- [prompt-runner/PROMPT_RUNNER_DEMO.md](prompt-runner/PROMPT_RUNNER_DEMO.md): hosted prompt-agent demo
+- [prompt-runner/MANIFEST.md](prompt-runner/MANIFEST.md): prompt manifest contract and example shape
+- [prompt-runner/HOSTED_PROMPT_RUNNER.md](prompt-runner/HOSTED_PROMPT_RUNNER.md): hosted control-plane behavior and API surface
+
+All prompt-runner-specific docs and examples now live under `docs/prompt-runner/`.
 
 Demo shortcuts:
 
@@ -46,14 +49,6 @@ Dashboard-only admin example:
 ```bash
 npx cross-env NEURAL_NECROPOLIS_SERVER_URL=https://your-server.example NEURAL_NECROPOLIS_ADMIN_TOKEN=replace-me npm run run:runner
 ```
-
-Standalone dashboard host example:
-
-```bash
-npx cross-env NEURAL_NECROPOLIS_SERVER_URL=https://your-server.example npm run run:dashboard:serve
-```
-
-You do not need the standalone dashboard for normal local play. If you are already using `http://127.0.0.1:3000`, you already have the built-in dashboard.
 
 If you are building your own TypeScript client, use [CONNECT_YOUR_BOT.md](CONNECT_YOUR_BOT.md).
 
@@ -256,8 +251,8 @@ The OpenClaw workers are not scripted heuristics pretending to be agents. They a
 Main files involved:
 
 - `scripts/run-openclaw-swarm.mjs`
-- `packages/openclaw-runner/src/autoplay.ts`
-- `packages/openclaw-runner/src/game-cli.ts`
+- `runtimes/openclaw-runner/src/autoplay.ts`
+- `runtimes/openclaw-runner/src/game-cli.ts`
 - `packages/agent-sdk/src/index.ts`
 
 ## Operational Model

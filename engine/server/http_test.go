@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,79 @@ func newHTTPTestServer() *Server {
 		heroSessions:       make(map[string]heroSession),
 		actionCache:        make(map[string]cachedActionResponse),
 	}
+}
+
+func TestDashboardRootServesEmbeddedReactApp(t *testing.T) {
+	s := newHTTPTestServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	s.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("content-type = %q, want html", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Neural Necropolis Dashboard App") {
+		t.Fatalf("dashboard root body missing embedded app title: %s", body)
+	}
+	if !strings.Contains(body, "<div id=\"root\"></div>") {
+		t.Fatalf("dashboard root body missing react mount: %s", body)
+	}
+	if strings.Contains(body, "<body>dashboard</body>") {
+		t.Fatalf("dashboard root unexpectedly served legacy html")
+	}
+}
+
+func TestDashboardLegacyRouteServesLegacyHTML(t *testing.T) {
+	s := newHTTPTestServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/legacy", nil)
+	s.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "<body>dashboard</body>") {
+		t.Fatalf("legacy route body = %q, want legacy dashboard html", body)
+	}
+}
+
+func TestDashboardAssetRouteServesEmbeddedBuildAssets(t *testing.T) {
+	s := newHTTPTestServer()
+	rootRec := httptest.NewRecorder()
+	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	s.routes().ServeHTTP(rootRec, rootReq)
+	body := rootRec.Body.String()
+	assetPath := extractFirstMatch(body, `src="([^"]*\/assets\/[^"]+\.js)"`)
+	if assetPath == "" {
+		t.Fatalf("dashboard root body missing asset path: %s", body)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, assetPath, nil)
+	s.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "javascript") {
+		t.Fatalf("content-type = %q, want javascript", got)
+	}
+	if body := rec.Body.String(); len(body) == 0 {
+		t.Fatalf("asset body should not be empty")
+	}
+}
+
+func extractFirstMatch(value string, pattern string) string {
+	re := regexp.MustCompile(pattern)
+	match := re.FindStringSubmatch(value)
+	if len(match) < 2 {
+		return ""
+	}
+	return match[1]
 }
 
 func setHeroSessionExpiry(t *testing.T, s *Server, heroID string, expiry time.Time) {
@@ -969,7 +1043,7 @@ func TestAdminSettingsUnpauseDoesNotStartUnderfilledBoard(t *testing.T) {
 		t.Fatal("expected join window to be armed for underfilled lobby")
 	}
 
-	settingsRec := performAdminRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":false,"submitWindowMs":12000,"resolveWindowMs":500}`)
+	settingsRec := performAdminRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"submitWindowMs":12000,"resolveWindowMs":500}`)
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("admin settings status = %d, want 200; body=%s", settingsRec.Code, settingsRec.Body.String())
 	}
@@ -1010,14 +1084,12 @@ func TestAdminStartRejectsWhilePaused(t *testing.T) {
 func TestAdminSettingsUpdatesTurnWindowsAndPreservesTimingInResponse(t *testing.T) {
 	s := newHTTPTestServer()
 	s.gameSettings = game.GameSettings{
-		Paused:                 false,
-		IncludeLandmarks:       true,
-		IncludePlayerPositions: true,
-		SubmitWindowMs:         12000,
-		ResolveWindowMs:        500,
+		Paused:          false,
+		SubmitWindowMs:  12000,
+		ResolveWindowMs: 500,
 	}
 
-	settingsRec := performAdminRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"includeLandmarks":false,"includePlayerPositions":true,"submitWindowMs":2000,"resolveWindowMs":250}`)
+	settingsRec := performAdminRequest(t, s.handleAdminSettings, http.MethodPost, "/api/admin/settings", `{"paused":false,"submitWindowMs":2000,"resolveWindowMs":250}`)
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("admin timing settings status = %d, want 200; body=%s", settingsRec.Code, settingsRec.Body.String())
 	}

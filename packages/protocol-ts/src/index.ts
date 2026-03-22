@@ -211,13 +211,29 @@ export type ActionKind =
   | "rest"
   | "use_item"
   | "interact"
-  | "wait";
+  | "wait"
+  | "cast_spell";
+
+export type SpellKind =
+  | "locate_treasury"
+  | "locate_monsters"
+  | "locate_heroes"
+  | "locate_buildings"
+  | "locate_prisoner";
 
 export type HeroAction = {
   kind: ActionKind;
   direction?: Direction;
   targetId?: EntityId;
   itemId?: EntityId;
+  spellKind?: SpellKind;
+};
+
+export type SpellDiscovery = {
+  spell: SpellKind;
+  positions: Position[];
+  discoveredTurn: number;
+  mobile: boolean;
 };
 
 export type LegalAction = HeroAction & { description: string };
@@ -250,15 +266,7 @@ export type Landmark = {
 };
 
 export type GameSettings = {
-  includeLandmarks: boolean;
-  includePlayerPositions: boolean;
   paused: boolean;
-};
-
-export type AllHeroPosition = {
-  id: string;
-  name: string;
-  position: Position;
 };
 
 export type VisionData = {
@@ -275,8 +283,7 @@ export type VisionData = {
   recentEvents: EventRecord[];
   legalActions: LegalAction[];
   turnState: TurnState;
-  landmarks?: Landmark[];
-  allHeroPositions?: AllHeroPosition[];
+  spellDiscoveries?: SpellDiscovery[];
   gameSettings: GameSettings;
 };
 

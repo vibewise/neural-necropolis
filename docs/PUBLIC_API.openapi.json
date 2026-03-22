@@ -4,7 +4,7 @@
   "info": {
     "title": "Neural Necropolis Public API",
     "version": "1.0.0",
-    "description": "Machine-readable contract for the current public Neural Necropolis HTTP API. This contract covers the stable player-facing and spectator-facing endpoints under /api. Operator-only admin routes are intentionally excluded from this first public contract and may be versioned separately later."
+    "description": "Machine-readable contract for the current public Neural Necropolis HTTP API. This contract covers the stable player-facing and spectator-facing endpoints under /api. Operator-only admin routes are intentionally excluded from this first public contract and may be versioned separately later. The built-in dashboard, standalone dashboard, and future framework-based frontends are expected to rely on this spectator-facing surface rather than engine-internal coupling."
   },
   "servers": [
     {
@@ -14,16 +14,20 @@
   ],
   "tags": [
     {
-      "name": "system"
+      "name": "system",
+      "description": "Public runtime reachability and turn-state metadata."
     },
     {
-      "name": "heroes"
+      "name": "heroes",
+      "description": "Authenticated player-facing hero registration, observation, action, and lease-management routes."
     },
     {
-      "name": "boards"
+      "name": "boards",
+      "description": "Spectator-facing dashboard snapshots, board summaries, and completed-board history."
     },
     {
-      "name": "stream"
+      "name": "stream",
+      "description": "Spectator-facing server-sent events for live dashboard updates."
     }
   ],
   "x-neural-necropolis-versioning": {
@@ -32,6 +36,46 @@
     "pathStrategy": "The unversioned /api paths represent the current major contract. Additive changes may ship within 1.x. Breaking wire changes require a new major contract version and a new endpoint namespace such as /api/v2.",
     "compatibility": "Consumers may rely on the documented required fields and response codes in this contract. New optional fields may be added without a major version bump.",
     "deprecation": "Public fields and endpoints must be documented as deprecated before removal from the current major contract."
+  },
+  "x-neural-necropolis-boundary": {
+    "spectatorRoutes": [
+      "/api/health",
+      "/api/dashboard",
+      "/api/boards",
+      "/api/boards/completed",
+      "/api/stream",
+      "/api/leaderboard",
+      "/api/seed"
+    ],
+    "playerRoutes": [
+      "/api/heroes/register",
+      "/api/heroes/{heroId}/observe",
+      "/api/heroes/{heroId}/act",
+      "/api/heroes/{heroId}/heartbeat",
+      "/api/heroes/{heroId}/log"
+    ],
+    "operatorRoutesExcluded": [
+      "/api/admin/start",
+      "/api/admin/stop",
+      "/api/admin/reset",
+      "/api/admin/settings"
+    ],
+    "dashboardRole": "The dashboard is an ordinary client of the public spectator and operator HTTP surfaces. It does not require engine-internal access.",
+    "streamContract": {
+      "transport": "text/event-stream",
+      "firstEvent": "snapshot",
+      "eventTypes": {
+        "snapshot": {
+          "payloadSchema": "#/components/schemas/DashboardResponse",
+          "description": "Current active-board dashboard snapshot using the same top-level shape as GET /api/dashboard."
+        },
+        "log": {
+          "payloadType": "string",
+          "description": "Human-readable engine or bot feed line for dashboard display."
+        }
+      },
+      "forwardCompatibility": "Clients should ignore unknown future event types."
+    }
   },
   "paths": {
     "/api/health": {
@@ -149,6 +193,18 @@
         "tags": ["stream"],
         "operationId": "streamBoardEvents",
         "summary": "Subscribe to server-sent snapshot and log events",
+        "x-neural-necropolis-event-stream": {
+          "firstEvent": "snapshot",
+          "eventTypes": {
+            "snapshot": {
+              "payloadSchema": "#/components/schemas/DashboardResponse"
+            },
+            "log": {
+              "payloadType": "string"
+            }
+          },
+          "forwardCompatibility": "Ignore unknown event types."
+        },
         "responses": {
           "200": {
             "description": "Server-sent event stream. The first event is always a snapshot event for the active board.",
@@ -160,6 +216,9 @@
                 "examples": {
                   "snapshot": {
                     "value": "event: snapshot\ndata: {\"boardId\":\"crypt-ash-7f2d\",\"seed\":\"crypt-ash-7f2d-123\"}\n\n"
+                  },
+                  "log": {
+                    "value": "event: log\ndata: Turn 3 submissions locked — resolve window (500ms).\n\n"
                   }
                 }
               }
@@ -592,7 +651,25 @@
       },
       "ActionKind": {
         "type": "string",
-        "enum": ["move", "attack", "rest", "use_item", "interact", "wait"]
+        "enum": [
+          "move",
+          "attack",
+          "rest",
+          "use_item",
+          "interact",
+          "wait",
+          "cast_spell"
+        ]
+      },
+      "SpellKind": {
+        "type": "string",
+        "enum": [
+          "locate_treasury",
+          "locate_monsters",
+          "locate_heroes",
+          "locate_buildings",
+          "locate_prisoner"
+        ]
       },
       "EventType": {
         "type": "string",
@@ -833,7 +910,8 @@
           "kind": { "$ref": "#/components/schemas/ActionKind" },
           "direction": { "$ref": "#/components/schemas/Direction" },
           "targetId": { "type": "string" },
-          "itemId": { "type": "string" }
+          "itemId": { "type": "string" },
+          "spellKind": { "$ref": "#/components/schemas/SpellKind" }
         },
         "required": ["kind"]
       },
@@ -845,6 +923,7 @@
           "direction": { "$ref": "#/components/schemas/Direction" },
           "targetId": { "type": "string" },
           "itemId": { "type": "string" },
+          "spellKind": { "$ref": "#/components/schemas/SpellKind" },
           "description": { "type": "string" }
         },
         "required": ["kind", "description"]
@@ -870,35 +949,27 @@
         },
         "required": ["x", "y", "kind"]
       },
-      "Landmark": {
+      "SpellDiscovery": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "kind": { "type": "string" },
-          "name": { "type": "string" },
-          "position": { "$ref": "#/components/schemas/Position" }
+          "spell": { "$ref": "#/components/schemas/SpellKind" },
+          "positions": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Position" }
+          },
+          "discoveredTurn": { "type": "integer" },
+          "mobile": { "type": "boolean" }
         },
-        "required": ["kind", "name", "position"]
-      },
-      "AllHeroPosition": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string" },
-          "position": { "$ref": "#/components/schemas/Position" }
-        },
-        "required": ["id", "name", "position"]
+        "required": ["spell", "positions", "discoveredTurn", "mobile"]
       },
       "GameSettings": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "includeLandmarks": { "type": "boolean" },
-          "includePlayerPositions": { "type": "boolean" },
           "paused": { "type": "boolean" }
         },
-        "required": ["includeLandmarks", "includePlayerPositions", "paused"]
+        "required": ["paused"]
       },
       "TurnState": {
         "type": "object",
@@ -1272,13 +1343,9 @@
               },
               "requestId": { "type": "string" },
               "turnState": { "$ref": "#/components/schemas/TurnState" },
-              "landmarks": {
+              "spellDiscoveries": {
                 "type": "array",
-                "items": { "$ref": "#/components/schemas/Landmark" }
-              },
-              "allHeroPositions": {
-                "type": "array",
-                "items": { "$ref": "#/components/schemas/AllHeroPosition" }
+                "items": { "$ref": "#/components/schemas/SpellDiscovery" }
               },
               "gameSettings": { "$ref": "#/components/schemas/GameSettings" }
             },

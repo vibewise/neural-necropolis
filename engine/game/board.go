@@ -596,16 +596,17 @@ func (b *Board) GetVision(heroID string) (*VisionData, error) {
 	}
 
 	return &VisionData{
-		Seed:            b.state.Seed,
-		Turn:            b.state.Turn,
-		Hero:            hero,
-		VisibleTiles:    tiles,
-		VisibleMonsters: visMonsters,
-		VisibleHeroes:   visHeroes,
-		VisibleNpcs:     visNpcs,
-		VisibleItems:    visItems,
-		RecentEvents:    rev,
-		LegalActions:    b.getLegalActions(hero),
+		Seed:             b.state.Seed,
+		Turn:             b.state.Turn,
+		Hero:             hero,
+		VisibleTiles:     tiles,
+		VisibleMonsters:  visMonsters,
+		VisibleHeroes:    visHeroes,
+		VisibleNpcs:      visNpcs,
+		VisibleItems:     visItems,
+		RecentEvents:     rev,
+		LegalActions:     b.getLegalActions(hero),
+		SpellDiscoveries: b.activeSpellDiscoveries(heroID),
 	}, nil
 }
 
@@ -666,6 +667,28 @@ func (b *Board) GetAllHeroPositions() []map[string]interface{} {
 		})
 	}
 	return result
+}
+
+// activeSpellDiscoveries returns non-expired spell discoveries for a hero.
+// Caller must hold b.mu (read or write).
+func (b *Board) activeSpellDiscoveries(heroID string) []SpellDiscovery {
+	if b.state.SpellDiscoveries == nil {
+		return nil
+	}
+	all := b.state.SpellDiscoveries[heroID]
+	if len(all) == 0 {
+		return nil
+	}
+	active := make([]SpellDiscovery, 0, len(all))
+	for _, d := range all {
+		if b.state.Turn-d.DiscoveredTurn <= CFG.SpellDiscoveryDuration {
+			active = append(active, d)
+		}
+	}
+	if len(active) == 0 {
+		return nil
+	}
+	return active
 }
 
 func (b *Board) getLegalActions(hero *HeroProfile) []LegalAction {
@@ -811,6 +834,46 @@ func (b *Board) getLegalActions(hero *HeroProfile) []LegalAction {
 		Description: fmt.Sprintf("Wait (reduce fatigue by %d)", CFG.FatigueWaitReduction),
 	})
 
+	// Spells (each costs one turn)
+	actions = append(actions,
+		LegalAction{
+			HeroAction:  HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateTreasury},
+			Description: "Cast Locate Treasury: reveal positions of all treasures and chests",
+		},
+		LegalAction{
+			HeroAction:  HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateMonsters},
+			Description: "Cast Locate Monsters: reveal positions of all living monsters (decays over time)",
+		},
+		LegalAction{
+			HeroAction:  HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateHeroes},
+			Description: "Cast Locate Heroes: reveal positions of all living heroes (decays over time)",
+		},
+		LegalAction{
+			HeroAction:  HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateBuildings},
+			Description: "Cast Locate Buildings: reveal positions of shrines, merchants, exits",
+		},
+	)
+
+	// Only offer prisoner spell if there is an unrescued prisoner
+	for _, npc := range b.state.Npcs {
+		if npc.Kind == NpcPrisoner {
+			rescued := false
+			for _, hid := range npc.InteractedBy {
+				if hid != "" {
+					rescued = true
+					break
+				}
+			}
+			if !rescued {
+				actions = append(actions, LegalAction{
+					HeroAction:  HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocatePrisoner},
+					Description: "Cast Locate Prisoner: reveal position of the prisoner",
+				})
+				break
+			}
+		}
+	}
+
 	return actions
 }
 
@@ -818,7 +881,8 @@ func actionsMatch(submitted HeroAction, legal HeroAction) bool {
 	return submitted.Kind == legal.Kind &&
 		submitted.Direction == legal.Direction &&
 		submitted.TargetID == legal.TargetID &&
-		submitted.ItemID == legal.ItemID
+		submitted.ItemID == legal.ItemID &&
+		submitted.SpellKind == legal.SpellKind
 }
 
 func (b *Board) isLegalActionLocked(hero *HeroProfile, action HeroAction) bool {
@@ -895,6 +959,11 @@ func summarizeAction(hero *HeroProfile, action HeroAction) string {
 		return "rest"
 	case ActionWait:
 		return "wait"
+	case ActionCastSpell:
+		if action.SpellKind == "" {
+			return "cast spell"
+		}
+		return fmt.Sprintf("cast %s", action.SpellKind)
 	default:
 		return string(action.Kind)
 	}

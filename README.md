@@ -14,24 +14,70 @@ If you are running locally, there is one primary path:
 2. open `http://127.0.0.1:3000`
 3. attach bots directly or run prompt runner and submit a hosted job
 
+The recommended first experience is the **hosted prompt path**: clone the repo, set an API key, start the server and prompt runner, then launch a hosted agent from the dashboard. See [docs/START_HERE.md](docs/START_HERE.md) for the step-by-step walkthrough.
+
 Everything else is optional infrastructure or deeper reference material.
 
 Primary docs:
 
 - start here: [docs/START_HERE.md](docs/START_HERE.md)
 - command-first setup: [docs/QUICKSTART.md](docs/QUICKSTART.md)
-- prompt runner demo: [docs/PROMPT_RUNNER_DEMO.md](docs/PROMPT_RUNNER_DEMO.md)
+- prompt runner demo: [docs/prompt-runner/PROMPT_RUNNER_DEMO.md](docs/prompt-runner/PROMPT_RUNNER_DEMO.md)
 
 Optional or advanced docs:
 
 - connect a custom bot through the SDK: [docs/CONNECT_YOUR_BOT.md](docs/CONNECT_YOUR_BOT.md)
-- standalone dashboard assumptions: [docs/DASHBOARD_STANDALONE.md](docs/DASHBOARD_STANDALONE.md)
-- prompt manifest product contract: [docs/PROMPT_MANIFEST.md](docs/PROMPT_MANIFEST.md)
-- hosted prompt runner control plane: [docs/HOSTED_PROMPT_RUNNER.md](docs/HOSTED_PROMPT_RUNNER.md)
-- prompt manifest schema: [docs/PROMPT_MANIFEST.schema.json](docs/PROMPT_MANIFEST.schema.json)
+- repo runtime layout and package roles: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- prompt manifest product contract: [docs/prompt-runner/MANIFEST.md](docs/prompt-runner/MANIFEST.md)
+- hosted prompt runner control plane: [docs/prompt-runner/HOSTED_PROMPT_RUNNER.md](docs/prompt-runner/HOSTED_PROMPT_RUNNER.md)
+- prompt manifest schema: [docs/prompt-runner/MANIFEST.schema.json](docs/prompt-runner/MANIFEST.schema.json)
 - public runtime and API reference: [docs/SPEC.md](docs/SPEC.md)
 - machine-readable public API contract: [docs/PUBLIC_API.openapi.json](docs/PUBLIC_API.openapi.json)
 - gameplay rules and parameters: [docs/GAME_MECHANICS.md](docs/GAME_MECHANICS.md)
+
+Prompt-runner docs live together under [docs/prompt-runner/](docs/prompt-runner/). If you are using hosted agents, start with the demo guide, then use the manifest contract and hosted control-plane reference as needed.
+
+## Repo Layout
+
+The repo is organized by runtime role:
+
+```text
+engine/      authoritative Go server and embedded dashboard host
+apps/        human-facing or operator-facing TypeScript apps
+runtimes/    autonomous bot processes and runtime helpers
+packages/    shared TypeScript libraries
+scripts/     local orchestration and validation helpers
+integrations/ workspace-specific integration assets and skills
+docs/        onboarding, contracts, and runtime reference
+```
+
+Today that means:
+
+```text
+engine/
+apps/
+   dashboard-app/
+   prompt-runner/
+runtimes/
+   scripted-bots/
+   ai-bots/
+   openclaw-runner/
+packages/
+   agent-sdk/
+   protocol-ts/
+integrations/
+   openclaw/
+      skills/
+docs/
+   prompt-runner/
+```
+
+## Integrations
+
+Current integration surface:
+
+- `integrations/openclaw/skills/`: OpenClaw-facing skill prompts and helper assets used when wiring external OpenClaw sessions into the game
+- `runtimes/openclaw-runner/`: the actual local OpenClaw worker runtime, gateway commands, and attach flows that run against the server
 
 ## Toolchain
 
@@ -59,8 +105,6 @@ Then choose one optional attachment path:
 
 - direct bots: scripted, AI bots, or OpenClaw
 - hosted prompt jobs through prompt runner
-
-The standalone dashboard is optional. It exists only for separately hosted UI deployments, not because local play needs a second dashboard.
 
 The shared SDK is the supported client entrypoint for TypeScript bots. Start with [docs/CONNECT_YOUR_BOT.md](docs/CONNECT_YOUR_BOT.md) if you want to attach your own bot instead of using a bundled runtime.
 
@@ -97,7 +141,7 @@ npx cross-env NEURAL_NECROPOLIS_SERVER_URL=https://your-server.example NEURAL_NE
 
 Hero routes also require a per-hero session token returned by `/api/heroes/register` and the server supports `Idempotency-Key` on `/api/heroes/:id/act`. Responses on those routes now also carry a `requestId` field plus the `X-Request-Id` header.
 
-The dashboard remains a server-served static client. It no longer receives admin credentials through server-side HTML injection; enter an admin token in the dashboard itself when you need operator controls.
+The dashboard remains a server-served static client. The default `:3000` UI is now the embedded React build, while the old monolithic HTML remains temporarily available at `/legacy` during the retirement period. Admin credentials are still entered only in the browser.
 
 ## Reference Clients And Dev Shortcuts
 
@@ -143,9 +187,10 @@ npx cross-env NEURAL_NECROPOLIS_SERVER_URL=http://127.0.0.1:3002 npm run run:aib
 Most consumers only need these entrypoints:
 
 - `npm run run:engine`: run the authoritative game server
+- `npm run run:dashboard:dev`: start the new Vite + React dashboard app scaffold for Phase 1 work
 - `npm run run:demo:local`: one-command local server plus small scripted demo mix
 - `npm run run:demo:prompt-runner`: one-command local server plus prompt-runner control plane demo
-- `npm run run:dashboard:serve`: serve the extracted standalone dashboard package locally when you intentionally want a separate UI host
+- `npm run run:dashboard:serve`: build and serve the same extracted dashboard app separately when you intentionally want a second UI host
 - `npm run run:aibots:bot`: connect one provider-backed client to an already running server
 - `npm run run:openclaw:bootstrap -- --session claw`: inspect and attach an OpenClaw-controlled session to an already running server
 - `npm run run:openclaw:bot`: start one persistent autonomous OpenClaw worker against an already running server
@@ -164,10 +209,6 @@ Advanced commands such as individual scripted bots, `run:runner`, `run:dev:all`,
 - `401 expired_session`: the hero lease expired. Re-register on an open board, or let the shared SDK recover automatically.
 - `409 wrong_phase`: actions are only accepted during submit phase. Observe again and wait for the next submit window.
 - `409 hero_capacity_reached`: the open board is full. Retry registration later or attach after the next board opens.
-
-Standalone dashboard smoke path:
-
-- `npm run test:dashboard:smoke`: verify the extracted dashboard package against `NEURAL_NECROPOLIS_SERVER_URL` or the default local server
 
 The longer copy-paste troubleshooting flow for custom bots is in [docs/CONNECT_YOUR_BOT.md](docs/CONNECT_YOUR_BOT.md).
 

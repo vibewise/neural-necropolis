@@ -10,15 +10,19 @@
     "npm": ">=10"
   },
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*",
+    "runtimes/*"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run test:agent-sdk && npm run test:prompt-runner",
+    "test": "npm run test:agent-sdk && npm run test:prompt-runner && npm run test:dashboard-app",
     "test:agent-sdk": "npm run test -w @neural-necropolis/agent-sdk",
     "test:prompt-runner": "npm run test -w @neural-necropolis/prompt-runner",
+    "test:dashboard-app": "npm run test -w @neural-necropolis/dashboard-app",
     "build:agent-sdk": "npm run build -w @neural-necropolis/agent-sdk",
     "build:protocol-ts": "npm run build -w @neural-necropolis/protocol-ts",
+    "build:dashboard-app": "npm run build -w @neural-necropolis/dashboard-app && node scripts/sync-dashboard-build.mjs",
     "build:scripted-bots": "npm run build -w @neural-necropolis/scripted-bots",
     "build:ai-bots": "npm run build -w @neural-necropolis/ai-bots",
     "build:openclaw-runner": "npm run build -w @neural-necropolis/openclaw-runner",
@@ -26,11 +30,9 @@
     "validate:contract": "tsx scripts/validate-public-contract.ts",
     "validate:prompt-manifest": "tsx scripts/validate-prompt-manifest.ts",
     "validate:boundaries": "node scripts/validate-architecture-boundaries.mjs",
-    "validate": "npm run validate:contract && npm run validate:prompt-manifest && npm run validate:boundaries && npm run test:prompt-runner",
+    "validate": "npm run validate:contract && npm run validate:prompt-manifest && npm run validate:boundaries && npm run test:prompt-runner && npm run test:dashboard-app",
     "run:prompt-runner": "npm run serve -w @neural-necropolis/prompt-runner",
-    "sync:dashboard-static": "npm run sync -w @neural-necropolis/dashboard-static",
-    "run:dashboard:serve": "npm run serve -w @neural-necropolis/dashboard-static",
-    "test:dashboard:smoke": "npm run smoke -w @neural-necropolis/dashboard-static",
+    "run:dashboard:dev": "npm run dev -w @neural-necropolis/dashboard-app",
     "run:engine": "node scripts/run-engine.mjs",
     "run:engine:build": "node scripts/run-engine.mjs --build",
     "run:demo:local": "node scripts/run-demo-local.mjs",
@@ -50,7 +52,7 @@
     "run:openclaw:step": "npm run step -w @neural-necropolis/openclaw-runner --",
     "run:openclaw:act": "npm run act -w @neural-necropolis/openclaw-runner --",
     "run:openclaw:reset": "npm run reset -w @neural-necropolis/openclaw-runner --",
-    "run:runner": "tsx watch src/runner.ts",
+    "run:runner": "tsx watch scripts/runner.ts",
     "run:dev:all": "concurrently -k -n runner,berserker,treasure,explorer,aibot -c white,red,yellow,green,magenta \"npm run run:runner\" \"npm run run:scripted:bot:berserker\" \"npm run run:scripted:bot:treasure\" \"npm run run:scripted:bot:explorer\" \"npm run run:aibots:bot\"",
     "run:all": "npm run run:dev:all"
   },

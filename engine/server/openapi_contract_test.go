@@ -124,6 +124,50 @@ func TestPublicAPIContractHasMetadataAndVersioningPolicy(t *testing.T) {
 	}
 }
 
+func TestPublicAPIContractDefinesDashboardBoundaryAndStreamMetadata(t *testing.T) {
+	doc := readPublicContract(t)
+	boundary := contractMap(t, doc["x-neural-necropolis-boundary"], "x-neural-necropolis-boundary")
+
+	spectatorRoutes, ok := boundary["spectatorRoutes"].([]any)
+	if !ok || len(spectatorRoutes) == 0 {
+		t.Fatal("spectatorRoutes missing or empty")
+	}
+	playerRoutes, ok := boundary["playerRoutes"].([]any)
+	if !ok || len(playerRoutes) == 0 {
+		t.Fatal("playerRoutes missing or empty")
+	}
+	operatorRoutes, ok := boundary["operatorRoutesExcluded"].([]any)
+	if !ok || len(operatorRoutes) == 0 {
+		t.Fatal("operatorRoutesExcluded missing or empty")
+	}
+	if contractString(t, boundary["dashboardRole"], "boundary.dashboardRole") == "" {
+		t.Fatal("dashboardRole is empty")
+	}
+
+	streamContract := contractMap(t, boundary["streamContract"], "boundary.streamContract")
+	if got := contractString(t, streamContract["transport"], "streamContract.transport"); got != "text/event-stream" {
+		t.Fatalf("stream transport = %q, want text/event-stream", got)
+	}
+	if got := contractString(t, streamContract["firstEvent"], "streamContract.firstEvent"); got != "snapshot" {
+		t.Fatalf("stream firstEvent = %q, want snapshot", got)
+	}
+	eventTypes := contractMap(t, streamContract["eventTypes"], "streamContract.eventTypes")
+	if _, ok := eventTypes["snapshot"]; !ok {
+		t.Fatal("streamContract.eventTypes missing snapshot")
+	}
+	if _, ok := eventTypes["log"]; !ok {
+		t.Fatal("streamContract.eventTypes missing log")
+	}
+
+	paths := contractMap(t, doc["paths"], "paths")
+	stream := contractMap(t, paths["/api/stream"], "path /api/stream")
+	streamGet := contractMap(t, stream["get"], "path /api/stream get")
+	streamMeta := contractMap(t, streamGet["x-neural-necropolis-event-stream"], "path /api/stream x-neural-necropolis-event-stream")
+	if got := contractString(t, streamMeta["firstEvent"], "streamMeta.firstEvent"); got != "snapshot" {
+		t.Fatalf("path /api/stream firstEvent = %q, want snapshot", got)
+	}
+}
+
 func TestPublicAPIContractListsCurrentPublicRoutes(t *testing.T) {
 	doc := readPublicContract(t)
 	paths := contractMap(t, doc["paths"], "paths")

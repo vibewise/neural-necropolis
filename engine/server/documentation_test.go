@@ -108,6 +108,25 @@ func TestSpecDocMentionsMachineReadableContractAndVersioning(t *testing.T) {
 	})
 }
 
+func TestSpecDocDefinesDashboardBoundaryAndStreamContract(t *testing.T) {
+	doc := readSpecDoc(t)
+	requireSpecContainsAll(t, doc, "dashboard boundary", []string{
+		"## Dashboard Boundary",
+		"### Spectator surface",
+		"### Player surface",
+		"### Operator surface",
+		"The dashboard is a client of the engine, not an engine-internal privilege tier.",
+		"`/api/admin/settings`",
+	})
+	requireSpecContainsAll(t, doc, "stream contract", []string{
+		"## Dashboard Stream Contract",
+		"the first emitted event is always `snapshot`",
+		"`snapshot` payloads use the same top-level shape as `/api/dashboard`",
+		"`log` payloads are plain text engine or bot messages",
+		"clients should ignore unknown future event types",
+	})
+}
+
 func TestSpecDocIncludesAuthGuidance(t *testing.T) {
 	doc := readSpecDoc(t)
 	requireSpecContainsAll(t, doc, "auth guidance", []string{

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -128,7 +129,25 @@ func (s *Server) Run() {
 	go s.autoStartLoop()
 	go s.heroSessionLeaseLoop()
 
+	handler := withCORS(s.routes())
+
+	host := envOr("HOST", "127.0.0.1")
+	addr := fmt.Sprintf("%s:%d", host, s.port)
+	displayHost := host
+	if host == "0.0.0.0" {
+		displayHost = "localhost"
+	}
+	log.Printf("Neural Necropolis engine on http://%s:%d | submit=%s resolve=%s", displayHost, s.port, formatWindowMs(s.planningMs), formatWindowMs(s.actionMs))
+	log.Printf("Neural Necropolis player auth active on hero routes%s", authModeSuffix(s.playerAuthToken, defaultDevPlayerAuthToken))
+	log.Printf("Neural Necropolis admin auth active on admin routes%s", authModeSuffix(s.adminAuthToken, defaultDevAdminAuthToken))
+	log.Fatal(http.ListenAndServe(addr, handler))
+}
+
+func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/assets/", http.FileServer(http.FS(DashboardAppFS)))
+	mux.HandleFunc("/legacy", s.handleLegacyDashboard)
+	mux.HandleFunc("/legacy/", s.handleLegacyDashboard)
 	mux.HandleFunc("/", s.handleDashboard)
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/dashboard", s.handleDashboardAPI)
@@ -143,17 +162,7 @@ func (s *Server) Run() {
 	mux.HandleFunc("/api/admin/settings", s.handleAdminSettings)
 	mux.HandleFunc("/api/seed", s.handleSeed)
 	mux.HandleFunc("/api/leaderboard", s.handleLeaderboard)
-
-	host := envOr("HOST", "127.0.0.1")
-	addr := fmt.Sprintf("%s:%d", host, s.port)
-	displayHost := host
-	if host == "0.0.0.0" {
-		displayHost = "localhost"
-	}
-	log.Printf("Neural Necropolis engine on http://%s:%d | submit=%s resolve=%s", displayHost, s.port, formatWindowMs(s.planningMs), formatWindowMs(s.actionMs))
-	log.Printf("Neural Necropolis player auth active on hero routes%s", authModeSuffix(s.playerAuthToken, defaultDevPlayerAuthToken))
-	log.Printf("Neural Necropolis admin auth active on admin routes%s", authModeSuffix(s.adminAuthToken, defaultDevAdminAuthToken))
-	log.Fatal(http.ListenAndServe(addr, withCORS(mux)))
+	return mux
 }
 
 func authModeSuffix(token string, fallback string) string {
@@ -555,6 +564,20 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	content, err := fs.ReadFile(DashboardAppFS, "index.html")
+	if err != nil {
+		fmt.Fprint(w, s.dashboardHTML)
+		return
+	}
+	w.Write(content)
+}
+
+func (s *Server) handleLegacyDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/legacy" && r.URL.Path != "/legacy/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, s.dashboardHTML)
 }
 
@@ -842,11 +865,8 @@ func (s *Server) handleHeroRoutes(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
 		settings := s.gameSettings
 		s.mu.RUnlock()
-		if settings.IncludeLandmarks {
-			resp["landmarks"] = board.GetLandmarks(10)
-		}
-		if settings.IncludePlayerPositions {
-			resp["allHeroPositions"] = board.GetAllHeroPositions()
+		if vision.SpellDiscoveries != nil {
+			resp["spellDiscoveries"] = vision.SpellDiscoveries
 		}
 		resp["requestId"] = requestID
 		resp["gameSettings"] = settings
@@ -1100,8 +1120,6 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		wasActionMs := s.actionMs
 		phase := s.turnPhase
 		merged := current
-		merged.IncludeLandmarks = incoming.IncludeLandmarks
-		merged.IncludePlayerPositions = incoming.IncludePlayerPositions
 		merged.Paused = incoming.Paused
 		merged.SubmitWindowMs = normalizeWindowMs(incoming.SubmitWindowMs, current.SubmitWindowMs, minSubmitWindowMs)
 		merged.ResolveWindowMs = normalizeWindowMs(incoming.ResolveWindowMs, current.ResolveWindowMs, minResolveWindowMs)
@@ -1123,7 +1141,7 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		s.emitLog(fmt.Sprintf("Game settings updated: landmarks=%v, playerPositions=%v, paused=%v, submit=%s, resolve=%s", merged.IncludeLandmarks, merged.IncludePlayerPositions, merged.Paused, formatWindowMs(merged.SubmitWindowMs), formatWindowMs(merged.ResolveWindowMs)))
+		s.emitLog(fmt.Sprintf("Game settings updated: paused=%v, submit=%s, resolve=%s", merged.Paused, formatWindowMs(merged.SubmitWindowMs), formatWindowMs(merged.ResolveWindowMs)))
 		writeJSON(w, map[string]interface{}{"ok": true, "settings": merged})
 
 	default:

@@ -32,14 +32,16 @@ const scripts = packageJson.scripts ?? {};
 
 const expectedScripts = {
   "run:aibots:bot": "npm run run:bot -w @neural-necropolis/ai-bots",
-  "run:openclaw:bot": "npm run run:bot -w @neural-necropolis/openclaw-runner",
+  "run:openclaw:bot":
+    "npm run run:bot -w @neural-necropolis/openclaw-runner --",
   "run:openclaw:register":
-    "npm run register -w @neural-necropolis/openclaw-runner",
+    "npm run register -w @neural-necropolis/openclaw-runner --",
   "run:openclaw:bootstrap":
-    "npm run bootstrap -w @neural-necropolis/openclaw-runner",
-  "run:openclaw:step": "npm run step -w @neural-necropolis/openclaw-runner",
-  "run:openclaw:act": "npm run act -w @neural-necropolis/openclaw-runner",
-  "run:openclaw:reset": "npm run reset -w @neural-necropolis/openclaw-runner",
+    "npm run bootstrap -w @neural-necropolis/openclaw-runner --",
+  "run:openclaw:step": "npm run step -w @neural-necropolis/openclaw-runner --",
+  "run:openclaw:act": "npm run act -w @neural-necropolis/openclaw-runner --",
+  "run:openclaw:reset":
+    "npm run reset -w @neural-necropolis/openclaw-runner --",
   "build:ai-bots": "npm run build -w @neural-necropolis/ai-bots",
   "build:openclaw-runner":
     "npm run build -w @neural-necropolis/openclaw-runner",
@@ -53,15 +55,15 @@ for (const [name, value] of Object.entries(expectedScripts)) {
 }
 
 const requiredPackageDeps = {
-  "packages/ai-bots/package.json": [
+  "runtimes/ai-bots/package.json": [
     "@neural-necropolis/agent-sdk",
     "@neural-necropolis/protocol-ts",
   ],
-  "packages/openclaw-runner/package.json": [
+  "runtimes/openclaw-runner/package.json": [
     "@neural-necropolis/agent-sdk",
     "@neural-necropolis/protocol-ts",
   ],
-  "packages/scripted-bots/package.json": [
+  "runtimes/scripted-bots/package.json": [
     "@neural-necropolis/agent-sdk",
     "@neural-necropolis/protocol-ts",
   ],
@@ -109,6 +111,12 @@ const forbiddenPatterns = [
 
 const codeFiles = [
   ...walkFiles(resolve(root, "packages"), (filePath) =>
+    /\.(ts|mts|cts|js|mjs)$/.test(filePath),
+  ),
+  ...walkFiles(resolve(root, "apps"), (filePath) =>
+    /\.(ts|mts|cts|js|mjs)$/.test(filePath),
+  ),
+  ...walkFiles(resolve(root, "runtimes"), (filePath) =>
     /\.(ts|mts|cts|js|mjs)$/.test(filePath),
   ),
   ...walkFiles(resolve(root, "scripts"), (filePath) =>

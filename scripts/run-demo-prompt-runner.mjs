@@ -92,7 +92,8 @@ const repoRoot = process.cwd();
 const defaultProfilesFile = path.resolve(
   repoRoot,
   "docs",
-  "PROMPT_RUNNER_PROFILES.example.json",
+  "prompt-runner",
+  "PROFILES.example.json",
 );
 const profilesFile =
   (process.env.PROMPT_RUNNER_MODEL_PROFILES_FILE ?? "").trim() ||
@@ -100,14 +101,15 @@ const profilesFile =
 const manifestFile = path.resolve(
   repoRoot,
   "docs",
-  "PROMPT_MANIFEST.example.json",
+  "prompt-runner",
+  "MANIFEST.example.json",
 );
 const dryRun = isTruthy(process.env.NN_DEMO_DRY_RUN);
 
 const engineCommand = "npm run run:engine";
 const promptRunnerCommand = "npm run run:prompt-runner";
 
-const uploadCommand = `Invoke-RestMethod -Method Post -Uri ${promptRunnerUrl}/manifests -ContentType "application/json" -InFile docs/PROMPT_MANIFEST.example.json`;
+const uploadCommand = `Invoke-RestMethod -Method Post -Uri ${promptRunnerUrl}/manifests -ContentType "application/json" -InFile docs/prompt-runner/MANIFEST.example.json`;
 const jobCommand = [
   "$body = @'",
   "{",

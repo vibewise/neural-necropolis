@@ -2166,17 +2166,6 @@
   function renderSettingsPanel(snap){
     var gs=snap.gameSettings||{};
     return '<div class="settings-grid">'
-      +'<div class="setting-group"><h3>Prompt Information Mode</h3>'
-      +'<div class="setting-desc" style="margin-bottom:8px">These settings control what information is sent to ALL bots equally. Changes take effect on the next observation request.</div>'
-      +'<div class="setting-row"><label><input type="radio" name="promptMode" value="A" '+(gs.includeLandmarks?'':'checked')+' /> <b>Mode A</b> — Vision Only</label></div>'
-      +'<div class="setting-desc">Bots receive only their local vision radius (tiles, monsters, NPCs, items within perception range).</div>'
-      +'<div class="setting-row"><label><input type="radio" name="promptMode" value="B" '+(gs.includeLandmarks?'checked':'')+' /> <b>Mode B</b> — Vision + 10 Landmarks</label></div>'
-      +'<div class="setting-desc">In addition to local vision, bots receive up to 10 notable map features (shrines, exit, treasure caches, merchants, prisoners, lava). The same landmarks are sent to every bot.</div>'
-      +'</div>'
-      +'<div class="setting-group"><h3>Player Visibility</h3>'
-      +'<div class="setting-row"><label><input type="checkbox" id="settingPlayerPos" '+(gs.includePlayerPositions?'checked':'')+' /> <b>Mode C</b> — Include All Player Positions</label></div>'
-      +'<div class="setting-desc">When enabled, bots receive the name and position of every living hero on the board, regardless of vision range.</div>'
-      +'</div>'
       +'<div class="setting-group"><h3>Dashboard Admin Token</h3>'
       +'<div class="setting-desc" style="margin-bottom:8px">Stored only in this browser. Needed for toggling turns and changing server settings from the dashboard.</div>'
       +'<div class="admin-auth">'
@@ -2203,11 +2192,7 @@
     var saveBtn=$('settingsSave');
     if(!saveBtn) return;
     saveBtn.addEventListener('click',function(){
-      var modeB=document.querySelector('input[name="promptMode"][value="B"]');
-      var playerPos=$('settingPlayerPos');
       var body={
-        includeLandmarks:modeB?modeB.checked:false,
-        includePlayerPositions:playerPos?playerPos.checked:false,
         paused:((lastSnap&&lastSnap.gameSettings)||{}).paused||false
       };
       apiFetch('/api/admin/settings',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(body)})

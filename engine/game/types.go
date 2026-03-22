@@ -333,19 +333,42 @@ type Quest struct {
 type ActionKind string
 
 const (
-	ActionMove     ActionKind = "move"
-	ActionAttack   ActionKind = "attack"
-	ActionRest     ActionKind = "rest"
-	ActionUseItem  ActionKind = "use_item"
-	ActionInteract ActionKind = "interact"
-	ActionWait     ActionKind = "wait"
+	ActionMove      ActionKind = "move"
+	ActionAttack    ActionKind = "attack"
+	ActionRest      ActionKind = "rest"
+	ActionUseItem   ActionKind = "use_item"
+	ActionInteract  ActionKind = "interact"
+	ActionWait      ActionKind = "wait"
+	ActionCastSpell ActionKind = "cast_spell"
 )
+
+// ── Spells ──
+
+type SpellKind string
+
+const (
+	SpellLocateTreasury  SpellKind = "locate_treasury"
+	SpellLocateMonsters  SpellKind = "locate_monsters"
+	SpellLocateHeroes    SpellKind = "locate_heroes"
+	SpellLocateBuildings SpellKind = "locate_buildings"
+	SpellLocatePrisoner  SpellKind = "locate_prisoner"
+)
+
+// SpellDiscovery records locations discovered by casting a spell.
+// Mobile entries (monsters, heroes) decay; static entries (treasury, buildings, prisoner) do not.
+type SpellDiscovery struct {
+	Spell          SpellKind  `json:"spell"`
+	Positions      []Position `json:"positions"`
+	DiscoveredTurn int        `json:"discoveredTurn"`
+	Mobile         bool       `json:"mobile"`
+}
 
 type HeroAction struct {
 	Kind      ActionKind `json:"kind"`
 	Direction Direction  `json:"direction,omitempty"`
 	TargetID  EntityID   `json:"targetId,omitempty"`
 	ItemID    EntityID   `json:"itemId,omitempty"`
+	SpellKind SpellKind  `json:"spellKind,omitempty"`
 }
 
 type LegalAction struct {
@@ -386,32 +409,34 @@ type VisionTile struct {
 }
 
 type VisionData struct {
-	Seed            string        `json:"seed"`
-	Turn            int           `json:"turn"`
-	Hero            *HeroProfile  `json:"hero"`
-	VisibleTiles    []VisionTile  `json:"visibleTiles"`
-	VisibleMonsters []Monster     `json:"visibleMonsters"`
-	VisibleHeroes   []HeroProfile `json:"visibleHeroes"`
-	VisibleNpcs     []Npc         `json:"visibleNpcs"`
-	VisibleItems    []FloorItem   `json:"visibleItems"`
-	RecentEvents    []EventRecord `json:"recentEvents"`
-	LegalActions    []LegalAction `json:"legalActions"`
+	Seed             string           `json:"seed"`
+	Turn             int              `json:"turn"`
+	Hero             *HeroProfile     `json:"hero"`
+	VisibleTiles     []VisionTile     `json:"visibleTiles"`
+	VisibleMonsters  []Monster        `json:"visibleMonsters"`
+	VisibleHeroes    []HeroProfile    `json:"visibleHeroes"`
+	VisibleNpcs      []Npc            `json:"visibleNpcs"`
+	VisibleItems     []FloorItem      `json:"visibleItems"`
+	RecentEvents     []EventRecord    `json:"recentEvents"`
+	LegalActions     []LegalAction    `json:"legalActions"`
+	SpellDiscoveries []SpellDiscovery `json:"spellDiscoveries,omitempty"`
 }
 
 // ── Board state (replaces WorldState) ──
 
 type BoardState struct {
-	Seed           string                  `json:"seed"`
-	DungeonName    string                  `json:"dungeonName"`
-	Turn           int                     `json:"turn"`
-	Map            GameMap                 `json:"map"`
-	Monsters       []Monster               `json:"monsters"`
-	Heroes         []HeroProfile           `json:"heroes"`
-	Npcs           []Npc                   `json:"npcs"`
-	FloorItems     []FloorItem             `json:"floorItems"`
-	Quests         []Quest                 `json:"quests"`
-	Events         []EventRecord           `json:"events"`
-	PendingActions map[EntityID]HeroAction `json:"pendingActions"`
+	Seed             string                        `json:"seed"`
+	DungeonName      string                        `json:"dungeonName"`
+	Turn             int                           `json:"turn"`
+	Map              GameMap                       `json:"map"`
+	Monsters         []Monster                     `json:"monsters"`
+	Heroes           []HeroProfile                 `json:"heroes"`
+	Npcs             []Npc                         `json:"npcs"`
+	FloorItems       []FloorItem                   `json:"floorItems"`
+	Quests           []Quest                       `json:"quests"`
+	Events           []EventRecord                 `json:"events"`
+	PendingActions   map[EntityID]HeroAction       `json:"pendingActions"`
+	SpellDiscoveries map[EntityID][]SpellDiscovery `json:"spellDiscoveries,omitempty"`
 }
 
 // ── Scoring ──
@@ -542,9 +567,7 @@ type Landmark struct {
 // ── Game settings (server-side, fair for all bots) ──
 
 type GameSettings struct {
-	IncludeLandmarks       bool `json:"includeLandmarks"`
-	IncludePlayerPositions bool `json:"includePlayerPositions"`
-	Paused                 bool `json:"paused"`
-	SubmitWindowMs         int  `json:"submitWindowMs,omitempty"`
-	ResolveWindowMs        int  `json:"resolveWindowMs,omitempty"`
+	Paused          bool `json:"paused"`
+	SubmitWindowMs  int  `json:"submitWindowMs,omitempty"`
+	ResolveWindowMs int  `json:"resolveWindowMs,omitempty"`
 }

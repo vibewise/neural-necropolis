@@ -178,8 +178,6 @@ async function configureScriptedServer(baseUrl) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      includeLandmarks: Boolean(settings.includeLandmarks),
-      includePlayerPositions: Boolean(settings.includePlayerPositions),
       paused: Boolean(settings.paused),
       submitWindowMs: desiredSubmitWindowMs,
       resolveWindowMs:

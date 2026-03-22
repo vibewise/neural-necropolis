@@ -1186,3 +1186,247 @@ func TestBoardScriptedHeroesInteractionHeavySmoke(t *testing.T) {
 		t.Fatalf("interaction-heavy smoke quest should be completed")
 	}
 }
+
+// ── Spell system tests ──
+
+func TestResolveTurnCastSpellLocateTreasuryRevealsPositions(t *testing.T) {
+	board := newBoardWithState("spell-treasury")
+	hero := newTestHero("hero-spell", "SpellHero", Position{X: 2, Y: 2})
+	board.state.Heroes = []HeroProfile{hero}
+	board.state.Map.Tiles[1][4] = TileTreasure
+	board.state.Map.Tiles[3][5] = TileChest
+
+	accepted, msg := board.SubmitAction(hero.ID, HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateTreasury})
+	if !accepted {
+		t.Fatalf("submit cast_spell: %s", msg)
+	}
+
+	board.StepWorld()
+
+	discoveries := board.state.SpellDiscoveries[hero.ID]
+	if len(discoveries) != 1 {
+		t.Fatalf("expected 1 discovery, got %d", len(discoveries))
+	}
+	d := discoveries[0]
+	if d.Spell != SpellLocateTreasury {
+		t.Fatalf("spell = %q, want %q", d.Spell, SpellLocateTreasury)
+	}
+	if d.Mobile {
+		t.Fatalf("treasury discovery should not be mobile")
+	}
+	if len(d.Positions) != 2 {
+		t.Fatalf("expected 2 treasury positions, got %d: %v", len(d.Positions), d.Positions)
+	}
+	if d.DiscoveredTurn != board.state.Turn {
+		t.Fatalf("discoveredTurn = %d, want %d", d.DiscoveredTurn, board.state.Turn)
+	}
+}
+
+func TestResolveTurnCastSpellLocateMonstersIsMobile(t *testing.T) {
+	board := newBoardWithState("spell-monsters")
+	hero := newTestHero("hero-spell-m", "SpellMonsterHero", Position{X: 2, Y: 2})
+	board.state.Heroes = []HeroProfile{hero}
+	board.state.Monsters = []Monster{
+		{ID: "mon-1", Kind: MonGoblin, Name: "Gob", Hp: 10, MaxHp: 10, Position: Position{X: 5, Y: 5}},
+		{ID: "mon-2", Kind: MonSkeleton, Name: "Skelly", Hp: 0, MaxHp: 10, Position: Position{X: 4, Y: 4}}, // dead
+	}
+
+	accepted, msg := board.SubmitAction(hero.ID, HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateMonsters})
+	if !accepted {
+		t.Fatalf("submit: %s", msg)
+	}
+	board.StepWorld()
+
+	discoveries := board.state.SpellDiscoveries[hero.ID]
+	if len(discoveries) != 1 {
+		t.Fatalf("expected 1 discovery, got %d", len(discoveries))
+	}
+	d := discoveries[0]
+	if !d.Mobile {
+		t.Fatalf("monster discovery should be mobile")
+	}
+	if len(d.Positions) != 1 {
+		t.Fatalf("expected 1 living monster position, got %d", len(d.Positions))
+	}
+}
+
+func TestCastSameSpellTwiceReplacesOldDiscovery(t *testing.T) {
+	board := newBoardWithState("spell-dedup")
+	hero := newTestHero("hero-dedup", "DedupHero", Position{X: 2, Y: 2})
+	board.state.Heroes = []HeroProfile{hero}
+
+	// Place a monster on turn 1.
+	board.state.Monsters = []Monster{
+		{ID: "mon-a", Kind: MonGoblin, Name: "Alpha", Hp: 10, MaxHp: 10, Position: Position{X: 5, Y: 5}},
+	}
+
+	// First cast on turn 1.
+	accepted, msg := board.SubmitAction(hero.ID, HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateMonsters})
+	if !accepted {
+		t.Fatalf("turn 1 submit: %s", msg)
+	}
+	board.StepWorld()
+
+	disc1 := board.state.SpellDiscoveries[hero.ID]
+	if len(disc1) != 1 {
+		t.Fatalf("after turn 1: expected 1 discovery, got %d", len(disc1))
+	}
+	firstTurn := disc1[0].DiscoveredTurn
+
+	// Move the monster and cast again on turn 2.
+	board.state.Monsters[0].Position = Position{X: 3, Y: 3}
+	accepted, msg = board.SubmitAction(hero.ID, HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateMonsters})
+	if !accepted {
+		t.Fatalf("turn 2 submit: %s", msg)
+	}
+	board.StepWorld()
+
+	disc2 := board.state.SpellDiscoveries[hero.ID]
+	if len(disc2) != 1 {
+		t.Fatalf("after turn 2: expected exactly 1 discovery (old replaced), got %d", len(disc2))
+	}
+	if disc2[0].DiscoveredTurn <= firstTurn {
+		t.Fatalf("re-cast should have updated discoveredTurn: %d <= %d", disc2[0].DiscoveredTurn, firstTurn)
+	}
+	if disc2[0].Positions[0] != (Position{X: 3, Y: 3}) {
+		t.Fatalf("re-cast should reflect new monster position, got %v", disc2[0].Positions)
+	}
+}
+
+func TestDifferentSpellTypesHaveIndependentCountdowns(t *testing.T) {
+	board := newBoardWithState("spell-countdown")
+	hero := newTestHero("hero-cd", "CountdownHero", Position{X: 2, Y: 2})
+	board.state.Heroes = []HeroProfile{hero}
+	board.state.Map.Tiles[1][4] = TileTreasure
+	board.state.Monsters = []Monster{
+		{ID: "mon-cd", Kind: MonGoblin, Name: "CdGob", Hp: 10, MaxHp: 10, Position: Position{X: 5, Y: 5}},
+	}
+
+	// Cast locate_treasury on turn 1.
+	accepted, _ := board.SubmitAction(hero.ID, HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateTreasury})
+	if !accepted {
+		t.Fatalf("turn 1 treasury submit failed")
+	}
+	board.StepWorld() // resolves turn 1 → now turn 2
+
+	treasuryDiscoveredTurn := board.state.SpellDiscoveries[hero.ID][0].DiscoveredTurn
+
+	// Cast locate_monsters on turn 2.
+	accepted, _ = board.SubmitAction(hero.ID, HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateMonsters})
+	if !accepted {
+		t.Fatalf("turn 2 monsters submit failed")
+	}
+	board.StepWorld() // resolves turn 2 → now turn 3
+
+	discoveries := board.state.SpellDiscoveries[hero.ID]
+	if len(discoveries) != 2 {
+		t.Fatalf("expected 2 independent discoveries, got %d", len(discoveries))
+	}
+
+	// Verify each has a different discoveredTurn.
+	var treasuryD, monstersD *SpellDiscovery
+	for i := range discoveries {
+		switch discoveries[i].Spell {
+		case SpellLocateTreasury:
+			treasuryD = &discoveries[i]
+		case SpellLocateMonsters:
+			monstersD = &discoveries[i]
+		}
+	}
+	if treasuryD == nil || monstersD == nil {
+		t.Fatalf("missing spell type in discoveries: %+v", discoveries)
+	}
+	if treasuryD.DiscoveredTurn != treasuryDiscoveredTurn {
+		t.Fatalf("treasury discoveredTurn changed unexpectedly")
+	}
+	if monstersD.DiscoveredTurn <= treasuryD.DiscoveredTurn {
+		t.Fatalf("monsters discoveredTurn (%d) should be after treasury (%d)", monstersD.DiscoveredTurn, treasuryD.DiscoveredTurn)
+	}
+}
+
+func TestSpellDiscoveriesExpireAfterDuration(t *testing.T) {
+	board := newBoardWithState("spell-expiry")
+	hero := newTestHero("hero-exp", "ExpiryHero", Position{X: 2, Y: 2})
+	board.state.Heroes = []HeroProfile{hero}
+
+	// Pre-seed a discovery that is older than SpellDiscoveryDuration.
+	board.state.Turn = CFG.SpellDiscoveryDuration + 5
+	board.state.SpellDiscoveries = map[EntityID][]SpellDiscovery{
+		hero.ID: {
+			{Spell: SpellLocateTreasury, Positions: []Position{{X: 1, Y: 1}}, DiscoveredTurn: 1, Mobile: false},
+			{Spell: SpellLocateMonsters, Positions: []Position{{X: 3, Y: 3}}, DiscoveredTurn: board.state.Turn - 2, Mobile: true},
+		},
+	}
+
+	vision, err := board.GetVision(hero.ID)
+	if err != nil {
+		t.Fatalf("GetVision: %v", err)
+	}
+
+	// Only the recent monsters discovery should remain (age = 2 <= 25).
+	// The treasury one from turn 1 is age = Turn-1 > 25, so it's expired.
+	if len(vision.SpellDiscoveries) != 1 {
+		t.Fatalf("expected 1 active discovery, got %d: %+v", len(vision.SpellDiscoveries), vision.SpellDiscoveries)
+	}
+	if vision.SpellDiscoveries[0].Spell != SpellLocateMonsters {
+		t.Fatalf("expected monsters discovery, got %q", vision.SpellDiscoveries[0].Spell)
+	}
+}
+
+func TestSpellDiscoveriesPerHeroIsolation(t *testing.T) {
+	board := newBoardWithState("spell-isolation")
+	heroA := newTestHero("hero-a", "HeroAlpha", Position{X: 2, Y: 2})
+	heroB := newTestHero("hero-b", "HeroBeta", Position{X: 4, Y: 4})
+	board.state.Heroes = []HeroProfile{heroA, heroB}
+	board.state.Map.Tiles[1][5] = TileTreasure
+
+	// Only hero A casts the spell.
+	accepted, msg := board.SubmitAction(heroA.ID, HeroAction{Kind: ActionCastSpell, SpellKind: SpellLocateTreasury})
+	if !accepted {
+		t.Fatalf("hero A submit: %s", msg)
+	}
+	accepted, msg = board.SubmitAction(heroB.ID, HeroAction{Kind: ActionWait})
+	if !accepted {
+		t.Fatalf("hero B submit: %s", msg)
+	}
+	board.StepWorld()
+
+	visionA, err := board.GetVision(heroA.ID)
+	if err != nil {
+		t.Fatalf("GetVision hero A: %v", err)
+	}
+	visionB, err := board.GetVision(heroB.ID)
+	if err != nil {
+		t.Fatalf("GetVision hero B: %v", err)
+	}
+
+	if len(visionA.SpellDiscoveries) != 1 {
+		t.Fatalf("hero A should see 1 discovery, got %d", len(visionA.SpellDiscoveries))
+	}
+	if len(visionB.SpellDiscoveries) != 0 {
+		t.Fatalf("hero B should see 0 discoveries, got %d", len(visionB.SpellDiscoveries))
+	}
+}
+
+func TestGetVisionLegalActionsIncludeSpells(t *testing.T) {
+	board := newBoardWithState("spell-legal")
+	hero := newTestHero("hero-legal", "LegalHero", Position{X: 2, Y: 2})
+	board.state.Heroes = []HeroProfile{hero}
+
+	vision, err := board.GetVision(hero.ID)
+	if err != nil {
+		t.Fatalf("GetVision: %v", err)
+	}
+
+	spellActions := 0
+	for _, a := range vision.LegalActions {
+		if a.Kind == ActionCastSpell {
+			spellActions++
+		}
+	}
+	// Should have at least locate_treasury, locate_monsters, locate_heroes, locate_buildings.
+	// locate_prisoner only if a prisoner exists.
+	if spellActions < 4 {
+		t.Fatalf("expected at least 4 spell legal actions, got %d", spellActions)
+	}
+}

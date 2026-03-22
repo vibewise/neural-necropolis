@@ -388,47 +388,40 @@ At perception 7 or above, hidden traps are shown as hidden traps.
 
 ## 8a. Prompt Information Modes (Game Settings)
 
-The server exposes a set of **game settings** that control how much extra
-information each bot receives in its prompt. These settings are global — they
-affect every bot equally on every board, guaranteeing fairness. They can be
-changed at any time from the dashboard Settings tab or via the
-`/api/admin/settings` endpoint.
+The server exposes a set of **game settings** that control global game behavior.
+These settings are global — they affect every bot equally on every board,
+guaranteeing fairness. They can be changed at any time from the dashboard
+Settings tab or via the `/api/admin/settings` endpoint.
 
-### Mode A — Vision Only (default)
+### Spell System
 
-Only the standard observation data described in §8 is included in the prompt.
-This is the baseline mode.
+Heroes can discover information about the dungeon by casting spells. Each spell
+costs one turn and reveals the **positions** (but not paths) of a specific
+category of entities. Five spells are available:
 
-### Mode B — Vision + Landmarks
+| Spell              | Reveals                         | Decays? |
+| ------------------ | ------------------------------- | ------- |
+| `locate_treasury`  | All treasures and chests        | No      |
+| `locate_monsters`  | All living monsters             | Yes     |
+| `locate_heroes`    | All other living heroes         | Yes     |
+| `locate_buildings` | Shrines, merchants, exits       | No      |
+| `locate_prisoner`  | Prisoner NPC (if any unrescued) | No      |
 
-When `includeLandmarks` is enabled, the observation additionally contains an
-array of **up to 10 map landmarks**. Landmarks are notable board features that
-exist regardless of vision range:
+**Per-hero knowledge.** Spell results are stored per hero. Only the hero who
+cast the spell receives the discovered positions. Other heroes are unaware.
 
-| Landmark kinds |
-| -------------- |
-| shrine         |
-| exit           |
-| treasure       |
-| chest          |
-| chest_locked   |
-| merchant       |
-| lava           |
-| NPC (by name)  |
+**Decay.** Discoveries for mobile entities (monsters, heroes) become stale as
+those entities move. Static entities (treasury, buildings, prisoner) remain
+accurate. All discoveries expire after **25 turns** regardless. Each spell type
+has its own independent countdown based on when it was last cast.
 
-The list is **deterministic per board** — every bot on the same board receives
-the exact same set of landmarks in the same order. The bot prompt formats each
-landmark with its kind, name, absolute position, and Manhattan distance from
-the hero.
+**Re-casting.** Casting the same spell again replaces the previous discovery of
+that type. The old data is discarded and the countdown resets from the new turn.
+Different spell types are independent — casting `locate_monsters` does not
+affect a previous `locate_treasury` discovery.
 
-### Mode C — Include All Player Positions
-
-When `includePlayerPositions` is enabled (toggle, independent of A/B), the
-observation includes the **name and position of every living hero** on the
-board, regardless of whether they are within vision range.
-
-This allows bots to reason about coordination, avoidance, or competition with
-other players.
+**Observe response.** Active (non-expired) spell discoveries for the observing
+hero are included in the `spellDiscoveries` array of the observe response.
 
 ### Paused flag (on/off toggle)
 
@@ -444,8 +437,6 @@ See §4 for full details.
 
 ```json
 {
-  "includeLandmarks": true,
-  "includePlayerPositions": false,
   "paused": false
 }
 ```

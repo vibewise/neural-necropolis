@@ -128,8 +128,6 @@ const turnStateFixture = {
 } satisfies TurnState;
 
 const gameSettingsFixture = {
-  includeLandmarks: true,
-  includePlayerPositions: false,
   paused: false,
 } satisfies GameSettings;
 
@@ -181,8 +179,6 @@ const visionFixture = {
   recentEvents: [],
   legalActions: [{ kind: "wait", description: "Wait in place" }],
   turnState: turnStateFixture,
-  landmarks: [{ kind: "exit", name: "Stairwell", position: { x: 9, y: 9 } }],
-  allHeroPositions: [{ id: "hero-1", name: "Scout", position: { x: 2, y: 3 } }],
   gameSettings: gameSettingsFixture,
 } satisfies VisionData;
 

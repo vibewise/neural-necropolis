@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { readPromptManifestFile } from "../packages/prompt-runner/src/index.js";
+import { readPromptManifestFile } from "../apps/prompt-runner/src/index.js";
 
 function main(): void {
   const filePath = resolveInputPath(process.argv.slice(2));
@@ -17,7 +17,7 @@ function resolveInputPath(args: string[]): string {
       return resolve(token.slice("--file=".length));
     }
   }
-  return resolve("docs", "PROMPT_MANIFEST.example.json");
+  return resolve("docs", "prompt-runner", "MANIFEST.example.json");
 }
 
 function parseJson(text: string): JsonValue {

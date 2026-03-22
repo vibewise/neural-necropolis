@@ -44,6 +44,63 @@ Validation gates that enforce this boundary:
 - `npm run validate:contract` checks the OpenAPI document against the shared TypeScript protocol package
 - `npm run validate:boundaries` checks that runtime packages stay isolated from deleted legacy runtime paths
 
+## Dashboard Boundary
+
+The dashboard is a client of the engine, not an engine-internal privilege tier.
+
+Phase 0 freezes the current boundary into three surfaces:
+
+### Spectator surface
+
+Read-only dashboard and watcher features depend on these public spectator routes:
+
+- `/api/health`
+- `/api/dashboard`
+- `/api/boards`
+- `/api/boards/completed`
+- `/api/stream`
+- `/api/leaderboard`
+- `/api/seed`
+
+These are the routes that a built-in dashboard, separately hosted dashboard, replay UI, or other browser client may depend on without requiring privileged engine access.
+
+### Player surface
+
+Bot and hero runtimes depend on the player surface:
+
+- `/api/heroes/register`
+- `/api/heroes/:id/observe`
+- `/api/heroes/:id/act`
+- `/api/heroes/:id/heartbeat`
+- `/api/heroes/:id/log`
+
+This surface is public but authenticated. It requires the player bearer token, and hero-scoped routes also require the per-hero session token.
+
+### Operator surface
+
+Operator controls remain intentionally outside the first public contract:
+
+- `/api/admin/start`
+- `/api/admin/stop`
+- `/api/admin/reset`
+- `/api/admin/settings`
+
+The browser dashboard may call these routes when the user provides an admin token, but third-party clients should not treat them as part of the stable player or spectator wire contract yet.
+
+## Dashboard Stream Contract
+
+The dashboard event stream is the public live-update transport for spectators and browser clients.
+
+Compatibility rules:
+
+- `/api/stream` is a server-sent event endpoint
+- the first emitted event is always `snapshot`
+- `snapshot` payloads use the same top-level shape as `/api/dashboard` for the current active board
+- `log` payloads are plain text engine or bot messages suitable for feed rendering
+- clients should ignore unknown future event types for forward compatibility
+
+This lets the embedded dashboard, a standalone dashboard, or a future framework-based frontend share the same live contract.
+
 ## Product Model
 
 The primary product model is remote attach: the game server runs somewhere, a client learns its address, and the client speaks the published protocol.
@@ -370,6 +427,13 @@ The current built-in personalities are consistent with that goal:
 | GET    | `/api/seed`                 | Current seed                      |
 
 ## API Notes
+
+Dashboard-facing spectator notes:
+
+- `/api/dashboard` is the canonical read model for the currently focused board snapshot
+- `/api/boards` is the canonical list view for queued, open, running, and completed board summaries
+- `/api/boards/completed` is the canonical paginated completed-board history surface
+- `/api/stream` is the canonical live spectator stream
 
 Observation responses include:
 

@@ -291,9 +291,6 @@ function makeObserveResponse(overrides = {}) {
     requestId: "req-observe",
     gameSettings: {
       paused: false,
-      includeLandmarks: false,
-      includePlayerPositions: false,
-      autoPauseAfterBoard: false,
     },
     leaseExpiresAt: 1_700_000_000_000,
     leaseTtlMs: 5_000,

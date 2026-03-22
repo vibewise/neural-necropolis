@@ -7,3 +7,8 @@ tmp/
 *.d.ts
 *.js.map
 .vscode/
+
+# Ignore generated dashboard app build output
+/engine/server/dashboard_app/
+/apps/dashboard-app/dist/
+/apps/dashboard-app/build/

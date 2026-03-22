@@ -60,6 +60,8 @@ var CFG = struct {
 	BoardJoinWindowMs  int
 	PreparedBoardQueue int
 	MaxTurnsPerBoard   int
+
+	SpellDiscoveryDuration int
 }{
 	MapWidth:   48,
 	MapHeight:  32,
@@ -125,4 +127,6 @@ var CFG = struct {
 	BoardJoinWindowMs:  10000,
 	PreparedBoardQueue: 10,
 	MaxTurnsPerBoard:   20,
+
+	SpellDiscoveryDuration: 25,
 }

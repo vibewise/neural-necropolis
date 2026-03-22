@@ -804,6 +804,70 @@ func ResolveTurn(state *BoardState) *BoardState {
 		case ActionWait:
 			hero.Fatigue = Clamp(hero.Fatigue-CFG.FatigueWaitReduction, 0, CFG.FatigueMax)
 			hero.LastAction = "waited"
+
+		case ActionCastSpell:
+			spell := action.SpellKind
+			var positions []Position
+			mobile := false
+			switch spell {
+			case SpellLocateTreasury:
+				for y := 0; y < next.Map.Height; y++ {
+					for x := 0; x < next.Map.Width; x++ {
+						t := next.Map.Tiles[y][x]
+						if t == TileTreasure || t == TileChest || t == TileChestLocked {
+							positions = append(positions, Position{x, y})
+						}
+					}
+				}
+			case SpellLocateMonsters:
+				mobile = true
+				for _, m := range next.Monsters {
+					if m.Hp > 0 {
+						positions = append(positions, m.Position)
+					}
+				}
+			case SpellLocateHeroes:
+				mobile = true
+				for _, h := range next.Heroes {
+					if h.ID != hero.ID && h.Status == StatusAlive {
+						positions = append(positions, h.Position)
+					}
+				}
+			case SpellLocateBuildings:
+				for y := 0; y < next.Map.Height; y++ {
+					for x := 0; x < next.Map.Width; x++ {
+						t := next.Map.Tiles[y][x]
+						if t == TileShrine || t == TileMerchant || t == TileExit {
+							positions = append(positions, Position{x, y})
+						}
+					}
+				}
+			case SpellLocatePrisoner:
+				for _, npc := range next.Npcs {
+					if npc.Kind == NpcPrisoner {
+						positions = append(positions, npc.Position)
+					}
+				}
+			}
+			if next.SpellDiscoveries == nil {
+				next.SpellDiscoveries = make(map[EntityID][]SpellDiscovery)
+			}
+			discovery := SpellDiscovery{
+				Spell:          spell,
+				Positions:      positions,
+				DiscoveredTurn: next.Turn,
+				Mobile:         mobile,
+			}
+			// Replace any previous discovery of the same spell type so re-casting refreshes data.
+			filtered := make([]SpellDiscovery, 0, len(next.SpellDiscoveries[hero.ID]))
+			for _, prev := range next.SpellDiscoveries[hero.ID] {
+				if prev.Spell != spell {
+					filtered = append(filtered, prev)
+				}
+			}
+			next.SpellDiscoveries[hero.ID] = append(filtered, discovery)
+			hero.LastAction = fmt.Sprintf("cast %s (found %d locations)", spell, len(positions))
+			events = append(events, evt(next.Turn, EventSystem, fmt.Sprintf("%s cast %s and discovered %d locations.", botTag(hero.Name), spell, len(positions))))
 		}
 
 		// Make bot outcomes visible in feed even when no special interaction event fired.
@@ -1113,6 +1177,20 @@ func deepCopyBoard(state *BoardState) *BoardState {
 	// Events
 	next.Events = make([]EventRecord, len(state.Events))
 	copy(next.Events, state.Events)
+
+	// Spell discoveries
+	if state.SpellDiscoveries != nil {
+		next.SpellDiscoveries = make(map[EntityID][]SpellDiscovery, len(state.SpellDiscoveries))
+		for heroID, discoveries := range state.SpellDiscoveries {
+			dc := make([]SpellDiscovery, len(discoveries))
+			for i, d := range discoveries {
+				dc[i] = d
+				dc[i].Positions = make([]Position, len(d.Positions))
+				copy(dc[i].Positions, d.Positions)
+			}
+			next.SpellDiscoveries[heroID] = dc
+		}
+	}
 
 	return next
 }
