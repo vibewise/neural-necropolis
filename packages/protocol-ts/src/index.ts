@@ -488,6 +488,91 @@ export type StreamEnvelope = {
   payload: DashboardResponse | string;
 };
 
+// ── Arena types ──
+
+export type ArenaStatus = "pending" | "running" | "complete";
+export type MatchStatus = "pending" | "running" | "complete";
+export type DuelStatus = "pending" | "running" | "complete";
+
+export type ArenaBotConfig = {
+  label: string;
+  provider: string;
+  model: string;
+  strategy: string;
+};
+
+export type DuelResult = {
+  duelIndex: number;
+  status: DuelStatus;
+  boardId: string;
+  seed: string;
+  maxTurns: number;
+  leaderboard: ScoreTrack[];
+  turnReached: number;
+  completedAt?: number;
+  botPositions: number[];
+};
+
+export type ArenaMatchSnapshot = {
+  id: string;
+  status: MatchStatus;
+  seed: string;
+  maxTurns: number;
+  duelCount: number;
+  duels: DuelResult[];
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+};
+
+export type ArenaBotStanding = {
+  botIndex: number;
+  label: string;
+  provider: string;
+  model: string;
+  wins: number;
+  duelsPlayed: number;
+  totalScore: number;
+};
+
+export type ArenaSnapshot = {
+  id: string;
+  name: string;
+  status: ArenaStatus;
+  bots: ArenaBotConfig[];
+  matches: ArenaMatchSnapshot[];
+  standings: ArenaBotStanding[];
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  playersPerDuel: number;
+};
+
+export type ArenaSummary = {
+  id: string;
+  name: string;
+  status: ArenaStatus;
+  botCount: number;
+  matchCount: number;
+  playersPerDuel: number;
+  createdAt: number;
+};
+
+export type ArenaListResponse = {
+  arenas: ArenaSummary[];
+};
+
+export type CreateArenaRequest = {
+  name: string;
+  bots: ArenaBotConfig[];
+  playersPerDuel?: number;
+};
+
+export type AddMatchRequest = {
+  duelCount: number;
+  maxTurns?: number;
+};
+
 export const CONFIG = {
   MAP_WIDTH: 48,
   MAP_HEIGHT: 32,

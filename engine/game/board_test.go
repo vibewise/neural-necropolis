@@ -137,3 +137,24 @@ func TestBoardStepWorldAutoEquipWorksWhenInventoryIsFull(t *testing.T) {
 		t.Fatalf("inventory length = %d, want %d", len(updated.Inventory), CFG.InventoryLimit)
 	}
 }
+
+func TestBoardEventsAfterIDReturnsNewEventsAfterTruncation(t *testing.T) {
+	board := NewBoard("Test-005", "seed-test", 4)
+	board.AddSystemEvent("marker")
+	markerID := board.LastEventID()
+
+	for i := 0; i < CFG.MaxEvents+5; i++ {
+		board.AddSystemEvent("filler")
+	}
+
+	events := board.EventsAfterID(markerID)
+	if len(events) == 0 {
+		t.Fatal("expected events after truncated marker")
+	}
+	if got := events[len(events)-1].Summary; got != "filler" {
+		t.Fatalf("last returned event = %q, want %q", got, "filler")
+	}
+	if len(events) != CFG.MaxEvents {
+		t.Fatalf("returned events = %d, want %d", len(events), CFG.MaxEvents)
+	}
+}

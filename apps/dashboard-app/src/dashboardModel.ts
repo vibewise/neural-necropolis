@@ -311,7 +311,7 @@ export function buildFeedItems(
   const botItems = (snapshot?.botMessages ?? []).map(toBotFeedItem);
   const streamItems = streamLogs.map((entry) => ({
     id: entry.id,
-    label: entry.boardId ? `Stream · ${entry.boardId}` : "Stream",
+    label: formatStreamLogLabel(entry),
     detail: entry.message,
     sortKey: entry.createdAt,
   }));
@@ -319,6 +319,34 @@ export function buildFeedItems(
   return [...streamItems, ...botItems, ...eventItems]
     .sort((left, right) => right.sortKey - left.sortKey)
     .slice(0, 24);
+}
+
+function formatStreamLogLabel(entry: StreamLogEntry): string {
+  const segments = ["Stream"];
+
+  if (entry.arenaId) {
+    segments.push(`Arena ${shortId(entry.arenaId)}`);
+  }
+  if (entry.matchId) {
+    segments.push(`Match ${shortId(entry.matchId)}`);
+  }
+  if (entry.duelIndex != null) {
+    segments.push(`Duel ${entry.duelIndex + 1}`);
+  }
+  if (
+    !entry.arenaId &&
+    !entry.matchId &&
+    entry.duelIndex == null &&
+    entry.boardId
+  ) {
+    segments.push(entry.boardId);
+  }
+
+  return segments.join(" · ");
+}
+
+function shortId(value: string): string {
+  return value.length > 8 ? value.slice(0, 8) : value;
 }
 
 function toEventFeedItem(event: EventRecord): FeedItem {

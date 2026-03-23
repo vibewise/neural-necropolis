@@ -50,14 +50,21 @@ describe("dashboardModel", () => {
       [
         {
           id: "stream-1",
-          message: "Turn 4 submissions locked.",
+          message:
+            "[arena:arena-12345678][match:match-87654321][duel:0] Turn 4 submissions locked.",
           createdAt: 300,
           boardId: null,
+          arenaId: "arena-12345678",
+          matchId: "match-87654321",
+          duelIndex: 0,
         },
       ],
     );
 
     expect(items).toHaveLength(3);
+    expect(items[0]?.label).toBe(
+      "Stream · Arena arena-12 · Match match-87 · Duel 1",
+    );
     expect(items[0]?.detail).toContain("submissions locked");
     expect(items[1]?.detail).toContain("Moving east");
     expect(items[2]?.detail).toContain("Board running");

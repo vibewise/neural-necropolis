@@ -97,6 +97,7 @@ Compatibility rules:
 - the first emitted event is always `snapshot`
 - `snapshot` payloads use the same top-level shape as `/api/dashboard` for the current active board
 - `log` payloads are plain text engine or bot messages suitable for feed rendering
+- arena-generated log lines prepend bracketed identifiers such as `[arena:...][match:...][duel:n]` when that context exists
 - clients should ignore unknown future event types for forward compatibility
 
 This lets the embedded dashboard, a standalone dashboard, or a future framework-based frontend share the same live contract.

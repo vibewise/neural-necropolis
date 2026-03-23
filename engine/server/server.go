@@ -22,6 +22,7 @@ import (
 
 type Server struct {
 	mgr                *game.Manager
+	arenas             *game.ArenaManager
 	playerAuthToken    string
 	adminAuthToken     string
 	heroSessionLeaseMs int
@@ -40,6 +41,16 @@ type Server struct {
 	gameSettings       game.GameSettings
 	heroSessions       map[string]heroSession
 	actionCache        map[string]cachedActionResponse
+	arenaTurnStates    map[string]arenaTurnState
+}
+
+type arenaTurnState struct {
+	Phase           game.TurnPhase
+	PhaseStartAt    time.Time
+	PhaseEndAt      time.Time
+	SubmitWindowMs  int
+	ResolveWindowMs int
+	Started         bool
 }
 
 type heroSessionStatus string
@@ -75,6 +86,40 @@ type sseClient struct {
 	done    chan struct{}
 }
 
+type streamLogContext struct {
+	ArenaID   string
+	MatchID   string
+	BoardID   string
+	DuelIndex *int
+}
+
+func (ctx *streamLogContext) prefix() string {
+	if ctx == nil {
+		return ""
+	}
+
+	parts := make([]string, 0, 3)
+	if arenaID := strings.TrimSpace(ctx.ArenaID); arenaID != "" {
+		parts = append(parts, fmt.Sprintf("[arena:%s]", arenaID))
+	}
+	if matchID := strings.TrimSpace(ctx.MatchID); matchID != "" {
+		parts = append(parts, fmt.Sprintf("[match:%s]", matchID))
+	}
+	if ctx.DuelIndex != nil {
+		parts = append(parts, fmt.Sprintf("[duel:%d]", *ctx.DuelIndex))
+	}
+
+	return strings.Join(parts, "")
+}
+
+func (ctx *streamLogContext) format(message string) string {
+	prefix := ctx.prefix()
+	if prefix == "" {
+		return message
+	}
+	return prefix + " " + message
+}
+
 var (
 	dotenvOnce sync.Once
 	dotenvVals map[string]string
@@ -101,6 +146,7 @@ func New() *Server {
 
 	return &Server{
 		mgr:                game.NewManager(),
+		arenas:             game.NewArenaManager(),
 		playerAuthToken:    resolvePlayerAuthToken(),
 		adminAuthToken:     resolveAdminAuthToken(),
 		heroSessionLeaseMs: heroSessionLeaseMs,
@@ -118,8 +164,9 @@ func New() *Server {
 			SubmitWindowMs:  planningMs,
 			ResolveWindowMs: actionMs,
 		},
-		heroSessions: make(map[string]heroSession),
-		actionCache:  make(map[string]cachedActionResponse),
+		heroSessions:    make(map[string]heroSession),
+		actionCache:     make(map[string]cachedActionResponse),
+		arenaTurnStates: make(map[string]arenaTurnState),
 	}
 }
 
@@ -162,6 +209,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/admin/settings", s.handleAdminSettings)
 	mux.HandleFunc("/api/seed", s.handleSeed)
 	mux.HandleFunc("/api/leaderboard", s.handleLeaderboard)
+	mux.HandleFunc("/api/arena", s.handleArenaRoutes)
+	mux.HandleFunc("/api/arena/", s.handleArenaRoutes)
 	return mux
 }
 
@@ -356,6 +405,26 @@ func (s *Server) tryAutoStartBoard() (*game.Board, bool) {
 // ── Turn phase state machine ──
 
 func (s *Server) getTurnState(board *game.Board) game.TurnState {
+	if board != nil {
+		s.mu.RLock()
+		arenaState, ok := s.arenaTurnStates[board.ID]
+		s.mu.RUnlock()
+		if ok {
+			now := time.Now()
+			return game.TurnState{
+				Turn:            board.Turn(),
+				Phase:           arenaState.Phase,
+				Started:         arenaState.Started,
+				SubmitWindowMs:  int64(arenaState.SubmitWindowMs),
+				ResolveWindowMs: int64(arenaState.ResolveWindowMs),
+				PhaseEndsAt:     arenaState.PhaseEndAt.UnixMilli(),
+				PhaseDurationMs: arenaState.PhaseEndAt.Sub(arenaState.PhaseStartAt).Milliseconds(),
+				PhaseElapsedMs:  now.Sub(arenaState.PhaseStartAt).Milliseconds(),
+				Seed:            board.Seed(),
+			}
+		}
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := time.Now()
@@ -376,6 +445,15 @@ func (s *Server) getTurnState(board *game.Board) game.TurnState {
 		PhaseElapsedMs:  now.Sub(s.phaseStartAt).Milliseconds(),
 		Seed:            seed,
 	}
+}
+
+func (s *Server) setArenaTurnState(boardID string, state arenaTurnState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.arenaTurnStates == nil {
+		s.arenaTurnStates = make(map[string]arenaTurnState)
+	}
+	s.arenaTurnStates[boardID] = state
 }
 
 func (s *Server) startBeatLoop(board *game.Board) {
@@ -438,9 +516,9 @@ func (s *Server) transitionPhase(board *game.Board) {
 
 	// Resolve window ended → apply submitted actions
 	s.mu.Unlock()
-	prevEventCount := board.EventCount()
+	prevLastEventID := board.LastEventID()
 	board.StepWorld()
-	s.emitBoardEvents(board, prevEventCount)
+	s.emitBoardEvents(board, &streamLogContext{BoardID: board.ID}, prevLastEventID)
 
 	if board.Turn() >= s.maxTurns {
 		s.finishBoard(board, fmt.Sprintf("Turn limit reached (%d).", s.maxTurns))
@@ -516,14 +594,22 @@ func (s *Server) broadcast(eventType string, payload interface{}) {
 	}
 }
 
-func (s *Server) emitLog(message string) {
-	log.Printf("%s", message)
-	s.broadcast("log", message)
+func (s *Server) emitContextLog(ctx *streamLogContext, message string) {
+	formatted := message
+	if ctx != nil {
+		formatted = ctx.format(message)
+	}
+	log.Printf("%s", formatted)
+	s.broadcast("log", formatted)
 }
 
-func (s *Server) emitBoardEvents(board *game.Board, previousCount int) {
-	for _, event := range board.EventsSince(previousCount) {
-		s.emitLog(fmt.Sprintf("[%s] %s", strings.ToUpper(string(event.Type)), event.Summary))
+func (s *Server) emitLog(message string) {
+	s.emitContextLog(nil, message)
+}
+
+func (s *Server) emitBoardEvents(board *game.Board, ctx *streamLogContext, previousLastEventID string) {
+	for _, event := range board.EventsAfterID(previousLastEventID) {
+		s.emitContextLog(ctx, fmt.Sprintf("[%s] %s", strings.ToUpper(string(event.Type)), event.Summary))
 	}
 }
 

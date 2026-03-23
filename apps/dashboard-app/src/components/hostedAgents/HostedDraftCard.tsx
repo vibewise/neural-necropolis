@@ -8,7 +8,6 @@ type HostedDraftCardProps = {
   draft: PromptDraft;
   commandProfile: CommandProfile;
   isWorking: boolean;
-  onLaunchJob: () => void;
   onResetDraft: () => void;
   onStoreManifest: () => void;
   onUpdateDraft: <K extends keyof PromptDraft>(
@@ -22,7 +21,6 @@ export function HostedDraftCard(props: HostedDraftCardProps) {
     draft,
     commandProfile,
     isWorking,
-    onLaunchJob,
     onResetDraft,
     onStoreManifest,
     onUpdateDraft,
@@ -230,10 +228,7 @@ export function HostedDraftCard(props: HostedDraftCardProps) {
           Reset Draft
         </button>
         <button type="button" disabled={isWorking} onClick={onStoreManifest}>
-          Store Manifest
-        </button>
-        <button type="button" disabled={isWorking} onClick={onLaunchJob}>
-          Launch Hosted Agent
+          Save Agent
         </button>
       </div>
     </div>

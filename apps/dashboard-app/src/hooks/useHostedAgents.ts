@@ -12,12 +12,20 @@ import {
   storePromptRunnerManifest,
   type PromptDraft,
 } from "../api";
+import type { CommandProfile } from "../commandProfile";
 import {
   normalizePromptRunnerBase,
   useDashboardStore,
 } from "../dashboardStore";
+import { createHeroBuild, useHeroBuildStore } from "../heroBuildStore";
 
 export type HostedStatusTone = "" | "ok" | "warn" | "error";
+
+type SaveBuildRequest = {
+  commandProfile: CommandProfile;
+  archetypeId: string | null;
+  name?: string;
+};
 
 type UseHostedAgentsOptions = {
   apiBase: string;
@@ -38,6 +46,7 @@ export function useHostedAgents(options: UseHostedAgentsOptions) {
   const setSelectedHostedJobId = useDashboardStore(
     (state) => state.setSelectedHostedJobId,
   );
+  const addBuild = useHeroBuildStore((state) => state.addBuild);
 
   const [draftBase, setDraftBase] = useState(promptRunnerBase);
   const [draftToken, setDraftToken] = useState(promptRunnerToken);
@@ -83,6 +92,31 @@ export function useHostedAgents(options: UseHostedAgentsOptions) {
 
   const ownerJobLimit = stateQuery.data?.health.maxActiveJobsPerOwner ?? 0;
 
+  const saveBuildMutation = useMutation({
+    mutationFn: async (request: SaveBuildRequest) => {
+      const buildName =
+        request.name?.trim() ||
+        draft.displayName.trim() ||
+        draft.heroName.trim();
+      const build = createHeroBuild(
+        buildName || draft.manifestId,
+        draft,
+        request.commandProfile,
+        request.archetypeId,
+      );
+      addBuild(build);
+      return build;
+    },
+    onSuccess: (build) => {
+      setStatusTone("ok");
+      setStatusMessage(`Saved bot ${build.name}.`);
+    },
+    onError: (error) => {
+      setStatusTone("error");
+      setStatusMessage(error instanceof Error ? error.message : String(error));
+    },
+  });
+
   const storeManifestMutation = useMutation({
     mutationFn: () =>
       storePromptRunnerManifest(connection, {
@@ -92,7 +126,9 @@ export function useHostedAgents(options: UseHostedAgentsOptions) {
       }),
     onSuccess: () => {
       setStatusTone("ok");
-      setStatusMessage(`Stored manifest ${draft.manifestId}.`);
+      setStatusMessage(
+        `Saved agent ${draft.displayName || draft.heroName || draft.manifestId}.`,
+      );
       void stateQuery.refetch();
     },
     onError: (error) => {
@@ -240,6 +276,8 @@ export function useHostedAgents(options: UseHostedAgentsOptions) {
     purgeDataMutation,
     replaceDraft,
     resetDraft,
+    saveBuild: saveBuildMutation.mutate,
+    saveBuildMutation,
     saveConnection,
     selectJob,
     selectedHostedJobId,

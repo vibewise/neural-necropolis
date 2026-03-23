@@ -210,6 +210,26 @@ func (m *Manager) AllBoards() []*Board {
 	return result
 }
 
+// RecordExternalBoard stores a board that was produced outside the continuous
+// registration flow, such as an arena duel board, so it can be inspected via
+// the regular dashboard and completed-board APIs.
+func (m *Manager) RecordExternalBoard(board *Board) {
+	if board == nil {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.boards[board.ID]; exists {
+		m.boards[board.ID] = board
+		return
+	}
+
+	m.boards[board.ID] = board
+	m.order = append(m.order, board.ID)
+}
+
 // ActiveBoard returns the most interesting board to display:
 // running > open > most recent completed.
 func (m *Manager) ActiveBoard() *Board {

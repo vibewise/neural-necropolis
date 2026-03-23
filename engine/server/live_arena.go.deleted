@@ -1,0 +1,213 @@
+package server
+
+import (
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/mmorph/engine/game"
+)
+
+const liveArenaID = "continuous-arena"
+const liveArenaName = "Continuous Arena"
+const liveArenaMatchDuelCount = 10
+
+func (s *Server) buildLiveArenaSnapshot() game.ArenaSnapshot {
+	boards := s.mgr.AllBoards()
+	bots := make([]game.ArenaBotConfig, 0)
+	botIndex := make(map[string]int)
+	duels := make([]game.DuelResult, 0, len(boards))
+	maxPlayersPerDuel := 2
+
+	ensureBot := func(name string, strategy string, trait string) int {
+		if idx, ok := botIndex[name]; ok {
+			return idx
+		}
+		idx := len(bots)
+		provider := "runtime"
+		model := strategy
+		if model == "" {
+			model = trait
+		}
+		if model == "" {
+			model = "live-agent"
+		}
+		bots = append(bots, game.ArenaBotConfig{
+			Label:    name,
+			Provider: provider,
+			Model:    model,
+			Strategy: strategy,
+		})
+		botIndex[name] = idx
+		return idx
+	}
+
+	for _, board := range boards {
+		snap := board.Snapshot(s.getTurnState(board))
+		if len(snap.Heroes) > maxPlayersPerDuel {
+			maxPlayersPerDuel = len(snap.Heroes)
+		}
+
+		for _, hero := range snap.Heroes {
+			ensureBot(hero.Name, hero.Strategy, string(hero.Trait))
+		}
+
+		positions := make([]int, 0, len(snap.Leaderboard))
+		for _, entry := range snap.Leaderboard {
+			positions = append(positions, ensureBot(entry.HeroName, "", ""))
+		}
+		if len(positions) == 0 {
+			for _, hero := range snap.Heroes {
+				positions = append(positions, ensureBot(hero.Name, hero.Strategy, string(hero.Trait)))
+			}
+		}
+
+		duelStatus := game.DuelStatusPending
+		switch board.Lifecycle() {
+		case game.LifecycleRunning:
+			duelStatus = game.DuelStatusRunning
+		case game.LifecycleCompleted:
+			duelStatus = game.DuelStatusComplete
+		}
+
+		duel := game.DuelResult{
+			DuelIndex:    len(duels) % liveArenaMatchDuelCount,
+			Status:       duelStatus,
+			BoardID:      snap.BoardID,
+			Seed:         snap.Seed,
+			MaxTurns:     s.maxTurns,
+			Leaderboard:  snap.Leaderboard,
+			TurnReached:  snap.World.Turn,
+			BotPositions: positions,
+		}
+		if duelStatus == game.DuelStatusComplete {
+			now := time.Now().UnixMilli()
+			duel.CompletedAt = &now
+		}
+		duels = append(duels, duel)
+	}
+
+	matches := make([]game.ArenaMatchSnapshot, 0, (len(duels)+liveArenaMatchDuelCount-1)/liveArenaMatchDuelCount)
+	for start := 0; start < len(duels); start += liveArenaMatchDuelCount {
+		end := start + liveArenaMatchDuelCount
+		if end > len(duels) {
+			end = len(duels)
+		}
+
+		chunk := make([]game.DuelResult, end-start)
+		copy(chunk, duels[start:end])
+
+		matchStatus := game.MatchStatusPending
+		allComplete := len(chunk) > 0
+		anyRunning := false
+		for _, duel := range chunk {
+			if duel.Status == game.DuelStatusRunning {
+				anyRunning = true
+			}
+			if duel.Status != game.DuelStatusComplete {
+				allComplete = false
+			}
+		}
+		if allComplete {
+			matchStatus = game.MatchStatusComplete
+		} else if anyRunning {
+			matchStatus = game.MatchStatusRunning
+		}
+
+		seed := ""
+		if len(chunk) > 0 {
+			seed = chunk[0].Seed
+		}
+
+		matches = append(matches, game.ArenaMatchSnapshot{
+			ID:        fmt.Sprintf("%s-match-%03d", liveArenaID, len(matches)+1),
+			Status:    matchStatus,
+			Seed:      seed,
+			MaxTurns:  s.maxTurns,
+			DuelCount: liveArenaMatchDuelCount,
+			Duels:     chunk,
+			CreatedAt: int64(start),
+		})
+	}
+
+	standings := make([]game.ArenaBotStanding, len(bots))
+	for i, bot := range bots {
+		standings[i] = game.ArenaBotStanding{
+			BotIndex: i,
+			Label:    bot.Label,
+			Provider: bot.Provider,
+			Model:    bot.Model,
+		}
+	}
+	for _, duel := range duels {
+		if duel.Status != game.DuelStatusComplete {
+			continue
+		}
+		for rank, entry := range duel.Leaderboard {
+			if rank >= len(duel.BotPositions) {
+				continue
+			}
+			idx := duel.BotPositions[rank]
+			if idx < 0 || idx >= len(standings) {
+				continue
+			}
+			standings[idx].TotalScore += entry.TotalScore
+			standings[idx].DuelsPlayed++
+			if rank == 0 {
+				standings[idx].Wins++
+			}
+		}
+	}
+
+	sort.SliceStable(standings, func(i, j int) bool {
+		if standings[i].Wins != standings[j].Wins {
+			return standings[i].Wins > standings[j].Wins
+		}
+		return standings[i].TotalScore > standings[j].TotalScore
+	})
+	for i := range standings {
+		standings[i].BotIndex = i
+	}
+
+	status := game.ArenaStatusRunning
+	if len(matches) == 0 {
+		status = game.ArenaStatusPending
+	}
+
+	return game.ArenaSnapshot{
+		ID:             liveArenaID,
+		Name:           liveArenaName,
+		Status:         status,
+		Bots:           bots,
+		Matches:        matches,
+		Standings:      standings,
+		CreatedAt:      0,
+		PlayersPerDuel: maxPlayersPerDuel,
+	}
+}
+
+func (s *Server) buildLiveArenaSummary() game.ArenaSummary {
+	snapshot := s.buildLiveArenaSnapshot()
+	return game.ArenaSummary{
+		ID:             snapshot.ID,
+		Name:           snapshot.Name,
+		Status:         snapshot.Status,
+		BotCount:       len(snapshot.Bots),
+		MatchCount:     len(snapshot.Matches),
+		PlayersPerDuel: snapshot.PlayersPerDuel,
+		CreatedAt:      snapshot.CreatedAt,
+	}
+}
+
+func latestArenaBoardID(snapshot game.ArenaSnapshot) string {
+	for mi := len(snapshot.Matches) - 1; mi >= 0; mi-- {
+		match := snapshot.Matches[mi]
+		for di := len(match.Duels) - 1; di >= 0; di-- {
+			duel := match.Duels[di]
+			if duel.BoardID != "" {
+				return duel.BoardID
+			}
+		}
+	}
+	return ""
+}

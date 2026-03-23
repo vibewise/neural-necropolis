@@ -75,8 +75,8 @@ export function RosterPanel(props: RosterPanelProps) {
 
   return (
     <section className="panel notes-panel">
-      <h2>Hero Roster</h2>
-      <p>Save, load, import, and export hero builds.</p>
+      <h2>Saved Agents</h2>
+      <p>Save, load, import, export, and annotate your local bot builds.</p>
 
       {/* Save current draft */}
       <div className="roster-save-row">
@@ -96,8 +96,7 @@ export function RosterPanel(props: RosterPanelProps) {
       {/* Builds list */}
       {builds.length === 0 ? (
         <div className="empty-state">
-          No saved builds yet. Configure a hero in Hosted Agents and save it
-          here.
+          No saved agents yet. Configure a bot in the workshop and save it here.
         </div>
       ) : (
         <div className="roster-list">

@@ -7,6 +7,7 @@ const PROMPT_RUNNER_BASE_KEY =
 const PROMPT_RUNNER_TOKEN_KEY =
   "neural-necropolis.dashboard-app.prompt-runner-token";
 const ADMIN_TOKEN_KEY = "neural-necropolis.dashboard-app.admin-token";
+const STREAM_CONTEXT_TAG = /\[(arena|match|board|duel):([^\]]+)\]/g;
 
 export type StreamConnectionState =
   | "idle"
@@ -20,6 +21,9 @@ export type StreamLogEntry = {
   message: string;
   createdAt: number;
   boardId: string | null;
+  arenaId: string | null;
+  matchId: string | null;
+  duelIndex: number | null;
 };
 
 type DashboardStore = {
@@ -62,17 +66,25 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   setSelectedBoardId: (value) => set({ selectedBoardId: value }),
   setStreamState: (value) => set({ streamState: value }),
   pushStreamLog: (message, boardId = null) =>
-    set((state) => ({
-      streamLogs: [
-        {
-          id: `${Date.now()}-${state.streamLogs.length}`,
-          message,
-          createdAt: Date.now(),
-          boardId,
-        },
-        ...state.streamLogs,
-      ].slice(0, 40),
-    })),
+    set((state) => {
+      const createdAt = Date.now();
+      const context = parseStreamLogContext(message);
+
+      return {
+        streamLogs: [
+          {
+            id: `${createdAt}-${state.streamLogs.length}`,
+            message,
+            createdAt,
+            boardId: boardId ?? context.boardId,
+            arenaId: context.arenaId,
+            matchId: context.matchId,
+            duelIndex: context.duelIndex,
+          },
+          ...state.streamLogs,
+        ].slice(0, 40),
+      };
+    }),
   clearStreamLogs: () => set({ streamLogs: [] }),
   setPromptRunnerConnection: (base, token) => {
     const normalizedBase = normalizePromptRunnerBase(base);
@@ -192,4 +204,47 @@ function resolveInitialAdminToken(): string {
   } catch (_error) {
     return "";
   }
+}
+
+function parseStreamLogContext(message: string): {
+  arenaId: string | null;
+  matchId: string | null;
+  boardId: string | null;
+  duelIndex: number | null;
+} {
+  const context = {
+    arenaId: null as string | null,
+    matchId: null as string | null,
+    boardId: null as string | null,
+    duelIndex: null as number | null,
+  };
+
+  for (const match of String(message || "").matchAll(STREAM_CONTEXT_TAG)) {
+    const key = match[1];
+    const value = match[2]?.trim() ?? "";
+    if (!value) {
+      continue;
+    }
+
+    if (key === "arena") {
+      context.arenaId = value;
+      continue;
+    }
+    if (key === "match") {
+      context.matchId = value;
+      continue;
+    }
+    if (key === "board") {
+      context.boardId = value;
+      continue;
+    }
+    if (key === "duel") {
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isNaN(parsed)) {
+        context.duelIndex = parsed;
+      }
+    }
+  }
+
+  return context;
 }

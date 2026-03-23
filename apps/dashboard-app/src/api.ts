@@ -7,6 +7,12 @@ import type {
   LeaderboardResponse,
   ManagerSnapshot,
   SeedResponse,
+  ArenaListResponse,
+  ArenaSnapshot,
+  ArenaMatchSnapshot,
+  DuelResult,
+  CreateArenaRequest,
+  AddMatchRequest,
 } from "@neural-necropolis/protocol-ts";
 import type {
   JobLogEntry,
@@ -24,6 +30,15 @@ export type {
   LeaderboardResponse,
   ManagerSnapshot,
   SeedResponse,
+  ArenaListResponse,
+  ArenaSnapshot,
+  ArenaMatchSnapshot,
+  ArenaBotConfig,
+  ArenaBotStanding,
+  ArenaSummary,
+  DuelResult,
+  CreateArenaRequest,
+  AddMatchRequest,
 } from "@neural-necropolis/protocol-ts";
 export type {
   JobLogEntry,
@@ -382,6 +397,61 @@ export function resetBoard(
   return adminFetchJson<AdminSnapshotResponse>(options, "/api/admin/reset", {
     method: "POST",
   });
+}
+
+// ── Arena API ──
+
+export function fetchArenas(apiBase: string): Promise<ArenaListResponse> {
+  return fetchJson<ArenaListResponse>(`${apiBase}/api/arena`);
+}
+
+export function fetchArena(
+  apiBase: string,
+  arenaId: string,
+): Promise<ArenaSnapshot> {
+  return fetchJson<ArenaSnapshot>(
+    `${apiBase}/api/arena/${encodeURIComponent(arenaId)}`,
+  );
+}
+
+export function createArena(
+  options: AdminRequestOptions,
+  request: CreateArenaRequest,
+): Promise<ArenaSnapshot> {
+  return adminFetchJson<ArenaSnapshot>(options, "/api/arena", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+}
+
+export function addArenaMatch(
+  options: AdminRequestOptions,
+  arenaId: string,
+  request: AddMatchRequest,
+): Promise<ArenaMatchSnapshot> {
+  return adminFetchJson<ArenaMatchSnapshot>(
+    options,
+    `/api/arena/${encodeURIComponent(arenaId)}/matches`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export function startArena(
+  options: AdminRequestOptions,
+  arenaId: string,
+): Promise<ArenaSnapshot> {
+  return adminFetchJson<ArenaSnapshot>(
+    options,
+    `/api/arena/${encodeURIComponent(arenaId)}/start`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 async function promptRunnerFetchJson<T>(

@@ -71,7 +71,7 @@
         },
         "log": {
           "payloadType": "string",
-          "description": "Human-readable engine or bot feed line for dashboard display."
+          "description": "Human-readable engine or bot feed line for dashboard display. Arena-generated lines may prepend bracketed identifiers such as [arena:...][match:...][duel:n]."
         }
       },
       "forwardCompatibility": "Clients should ignore unknown future event types."
@@ -218,7 +218,7 @@
                     "value": "event: snapshot\ndata: {\"boardId\":\"crypt-ash-7f2d\",\"seed\":\"crypt-ash-7f2d-123\"}\n\n"
                   },
                   "log": {
-                    "value": "event: log\ndata: Turn 3 submissions locked — resolve window (500ms).\n\n"
+                    "value": "event: log\ndata: [arena:77abff15-b487-4e4b-82ca-108a698daefe][match:9d292802-f9af-441f-a81b-50d820d1e2b1][duel:0] Turn 3 submissions locked — resolve window (500ms).\n\n"
                   }
                 }
               }

@@ -281,6 +281,115 @@ func TestTransitionPhaseFinishesBoardWhenAllHeroesDone(t *testing.T) {
 	}
 }
 
+func TestGetTurnStatePrefersArenaOverride(t *testing.T) {
+	s := &Server{
+		planningMs:      1200,
+		actionMs:        300,
+		arenaTurnStates: make(map[string]arenaTurnState),
+	}
+	board := game.NewBoard("arena-override-board", "seed-override", 2)
+	board.SetLifecycle(game.LifecycleRunning)
+
+	start := time.Now().Add(-200 * time.Millisecond)
+	end := start.Add(1200 * time.Millisecond)
+	s.setArenaTurnState(board.ID, arenaTurnState{
+		Phase:           game.PhaseResolve,
+		PhaseStartAt:    start,
+		PhaseEndAt:      end,
+		SubmitWindowMs:  1200,
+		ResolveWindowMs: 300,
+		Started:         true,
+	})
+
+	state := s.getTurnState(board)
+	if state.Phase != game.PhaseResolve {
+		t.Fatalf("phase = %s, want %s", state.Phase, game.PhaseResolve)
+	}
+	if !state.Started {
+		t.Fatal("expected override turn state to be started")
+	}
+	if state.SubmitWindowMs != 1200 {
+		t.Fatalf("submitWindowMs = %d, want 1200", state.SubmitWindowMs)
+	}
+	if state.ResolveWindowMs != 300 {
+		t.Fatalf("resolveWindowMs = %d, want 300", state.ResolveWindowMs)
+	}
+	if state.PhaseEndsAt != end.UnixMilli() {
+		t.Fatalf("phaseEndsAt = %d, want %d", state.PhaseEndsAt, end.UnixMilli())
+	}
+	if state.Seed != "seed-override" {
+		t.Fatalf("seed = %q, want seed-override", state.Seed)
+	}
+	if state.PhaseElapsedMs < 0 {
+		t.Fatalf("phaseElapsedMs = %d, want non-negative", state.PhaseElapsedMs)
+	}
+}
+
+func TestRunArenaDuelRespectsSubmitResolveWindows(t *testing.T) {
+	s := &Server{
+		mgr:             game.NewManager(),
+		planningMs:      40,
+		actionMs:        25,
+		maxTurns:        4,
+		streamClients:   make(map[*sseClient]bool),
+		arenaTurnStates: make(map[string]arenaTurnState),
+		gameSettings:    game.GameSettings{Paused: true, SubmitWindowMs: 40, ResolveWindowMs: 25},
+	}
+	arena := &game.Arena{
+		ID:             "arena-test",
+		Name:           "Arena Test",
+		Status:         game.ArenaStatusRunning,
+		PlayersPerDuel: 2,
+		Bots: []game.ArenaBotConfig{
+			{Label: "Bot A", Provider: "openai", Model: "gpt-4o", Strategy: "test-a"},
+			{Label: "Bot B", Provider: "openai", Model: "gpt-4o", Strategy: "test-b"},
+		},
+	}
+	duel := &game.DuelResult{
+		DuelIndex:    0,
+		Seed:         "duel-seed",
+		MaxTurns:     2,
+		BotPositions: []int{0, 1},
+	}
+
+	startedAt := time.Now()
+	_, turnReached, boardID := s.runArenaDuel(arena, "match-test", duel)
+	elapsed := time.Since(startedAt)
+
+	minimum := time.Duration(s.planningMs+s.actionMs-10) * time.Millisecond
+	if elapsed < minimum {
+		t.Fatalf("arena duel elapsed = %s, want at least %s", elapsed, minimum)
+	}
+	if turnReached < 2 {
+		t.Fatalf("turnReached = %d, want at least 2", turnReached)
+	}
+
+	board := s.mgr.GetBoard(boardID)
+	if board == nil {
+		t.Fatal("expected arena duel board to be recorded in manager")
+	}
+	if board.Lifecycle() != game.LifecycleCompleted {
+		t.Fatalf("board lifecycle = %s, want %s", board.Lifecycle(), game.LifecycleCompleted)
+	}
+
+	turnState := s.getTurnState(board)
+	if turnState.Started {
+		t.Fatal("expected completed arena duel turn state to report started=false")
+	}
+
+	snap := board.Snapshot(turnState)
+	foundBotDecision := false
+	for _, event := range snap.RecentEvents {
+		if strings.Contains(event.Summary, "[BOT]") {
+			foundBotDecision = true
+			break
+		}
+	}
+	if !foundBotDecision {
+		t.Fatalf("expected arena duel to record bot decisions, recentEvents=%+v", snap.RecentEvents)
+	}
+}
+
 func TestBoardWinnerSummaryPrefersHighestScoreAcrossMixedEndStates(t *testing.T) {
 	s := &Server{
 		mgr:           game.NewManager(),

@@ -202,6 +202,44 @@ func (b *Board) EventsSince(index int) []EventRecord {
 	return events
 }
 
+func (b *Board) LastEventID() string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if len(b.state.Events) == 0 {
+		return ""
+	}
+	return b.state.Events[len(b.state.Events)-1].ID
+}
+
+func (b *Board) EventsAfterID(eventID string) []EventRecord {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if len(b.state.Events) == 0 {
+		return nil
+	}
+	if eventID == "" {
+		events := make([]EventRecord, len(b.state.Events))
+		copy(events, b.state.Events)
+		return events
+	}
+
+	start := -1
+	for i := len(b.state.Events) - 1; i >= 0; i-- {
+		if b.state.Events[i].ID == eventID {
+			start = i + 1
+			break
+		}
+	}
+	if start == -1 {
+		start = 0
+	}
+
+	events := make([]EventRecord, len(b.state.Events[start:]))
+	copy(events, b.state.Events[start:])
+	return events
+}
+
 // Snapshot builds a dashboard-ready snapshot of this board.
 func (b *Board) Snapshot(turnState TurnState) BoardSnapshot {
 	b.mu.RLock()
