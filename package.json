@@ -37,6 +37,7 @@
     "run:engine:build": "node scripts/run-engine.mjs --build",
     "run:demo:local": "node scripts/run-demo-local.mjs",
     "run:demo:prompt-runner": "node scripts/run-demo-prompt-runner.mjs",
+    "run:benchmark:duel": "node scripts/run-llm-duel-benchmark.mjs",
     "run:scripted:bot:berserker": "npm run run:berserker -w @neural-necropolis/scripted-bots",
     "run:scripted:bot:treasure": "npm run run:treasure-hunter -w @neural-necropolis/scripted-bots",
     "run:scripted:bot:explorer": "npm run run:explorer -w @neural-necropolis/scripted-bots",

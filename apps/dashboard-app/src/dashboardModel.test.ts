@@ -5,6 +5,7 @@ import {
   buildControlNotice,
   buildFeedItems,
   buildHeaderStatus,
+  deriveSelectedBoardSummary,
   shouldApplyStreamSnapshot,
 } from "./dashboardModel";
 
@@ -118,5 +119,18 @@ describe("dashboardModel", () => {
     expect(
       launcher.checklist.find((item) => item.label === "Server")?.state,
     ).toBe("ready");
+  });
+
+  it("falls back to the live snapshot board when the pinned board is stale", () => {
+    const selected = deriveSelectedBoardSummary(
+      [
+        { boardId: "board-a", boardName: "Arena A", status: "open" },
+        { boardId: "board-b", boardName: "Arena B", status: "running" },
+      ] as never,
+      "missing-board",
+      { boardId: "board-b" } as never,
+    );
+
+    expect(selected?.boardId).toBe("board-b");
   });
 });

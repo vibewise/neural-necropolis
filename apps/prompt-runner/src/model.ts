@@ -77,6 +77,9 @@ export async function requestModelCompletion(
     ...(config.includeReasoning !== undefined
       ? { include_reasoning: config.includeReasoning }
       : {}),
+    ...(config.reasoningEffort
+      ? { reasoning_effort: config.reasoningEffort }
+      : {}),
   };
 
   const response = await client.chat.completions.create(request, {

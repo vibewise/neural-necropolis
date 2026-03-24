@@ -69,6 +69,49 @@ npx cross-env HOST=127.0.0.1 PORT=3002 npm run run:engine
 
 Then open the dashboard at the address the server prints.
 
+### Mixed-Provider Arena Example
+
+If you want one arena bot on OpenAI and the other on Groq Llama, put both keys
+where the engine can read them before starting `run:engine`:
+
+```bash
+npx cross-env OPENAI_API_KEY=your-openai-key GROQ_API_KEY=your-groq-key npm run run:engine
+```
+
+Then in the dashboard Arena page:
+
+1. create a two-agent arena
+2. expand `Provider / Model` for bot A and set `OpenAI` with `gpt-4o`
+3. expand `Provider / Model` for bot B and set `Groq` with `llama-3.3-70b-versatile`
+4. create the arena and start it
+
+The same setup also works through the raw arena API:
+
+```json
+{
+  "name": "OpenAI vs Groq",
+  "playersPerDuel": 2,
+  "bots": [
+    {
+      "label": "Treasure Mind A",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "strategy": "treasure-hunter",
+      "temperature": 0.7,
+      "maxOutputTokens": 300
+    },
+    {
+      "label": "Berserker B",
+      "provider": "groq",
+      "model": "llama-3.3-70b-versatile",
+      "strategy": "berserker",
+      "temperature": 0.7,
+      "maxOutputTokens": 300
+    }
+  ]
+}
+```
+
 Shared behavior:
 
 - the server starts paused

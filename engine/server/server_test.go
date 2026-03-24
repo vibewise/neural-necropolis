@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -353,7 +355,7 @@ func TestRunArenaDuelRespectsSubmitResolveWindows(t *testing.T) {
 	}
 
 	startedAt := time.Now()
-	_, turnReached, boardID := s.runArenaDuel(arena, "match-test", duel)
+	_, turnReached, boardID, _, _, _, _ := s.runArenaDuel(arena, "match-test", duel)
 	elapsed := time.Since(startedAt)
 
 	minimum := time.Duration(s.planningMs+s.actionMs-10) * time.Millisecond
@@ -387,6 +389,140 @@ func TestRunArenaDuelRespectsSubmitResolveWindows(t *testing.T) {
 	}
 	if !foundBotDecision {
 		t.Fatalf("expected arena duel to record bot decisions, recentEvents=%+v", snap.RecentEvents)
+	}
+}
+
+func TestArenaTraceArtifactsPersistSummariesAndLogs(t *testing.T) {
+	resultsDir := t.TempDir()
+	s := &Server{
+		mgr:             game.NewManager(),
+		arenas:          game.NewArenaManager(),
+		planningMs:      1,
+		actionMs:        1,
+		streamClients:   make(map[*sseClient]bool),
+		arenaTurnStates: make(map[string]arenaTurnState),
+		arenaResultsDir: resultsDir,
+		gameSettings:    game.GameSettings{Paused: true, SubmitWindowMs: 1, ResolveWindowMs: 1},
+	}
+
+	arena, err := s.arenas.CreateArena(game.CreateArenaRequest{
+		Name: "Trace Arena",
+		Bots: []game.ArenaBotConfig{
+			{Label: "Bot A", Provider: "openai", Model: "gpt-4o", Strategy: "treasure"},
+			{Label: "Bot B", Provider: "openai", Model: "gpt-4o", Strategy: "berserker"},
+		},
+		PlayersPerDuel: 2,
+	})
+	if err != nil {
+		t.Fatalf("create arena: %v", err)
+	}
+	match, err := s.arenas.AddMatch(arena.ID, game.AddMatchRequest{DuelCount: 2, MaxTurns: 1})
+	if err != nil {
+		t.Fatalf("add match: %v", err)
+	}
+	duel := match.Duels[0]
+
+	leaderboard, turnReached, boardID, tokenStats, heroAssignments, finalSnap, allEvents := s.runArenaDuel(arena, match.ID, &duel)
+	if err := s.arenas.RecordDuelResult(arena.ID, match.ID, duel.DuelIndex, leaderboard, turnReached, boardID, tokenStats, heroAssignments); err != nil {
+		t.Fatalf("record duel result: %v", err)
+	}
+	duelIndex := duel.DuelIndex
+	s.emitContextLog(&streamLogContext{ArenaID: arena.ID, MatchID: match.ID, DuelIndex: &duelIndex}, "trace smoke test")
+	if err := s.persistArenaArtifacts(arena, match.ID, duel.DuelIndex, finalSnap, allEvents); err != nil {
+		t.Fatalf("persist arena artifacts: %v", err)
+	}
+
+	duelRoot := filepath.Join(resultsDir, arena.ID, "matches", match.ID, "duels", "000")
+	for _, path := range []string{
+		filepath.Join(resultsDir, arena.ID, "summary.json"),
+		filepath.Join(resultsDir, arena.ID, "matches", match.ID, "summary.json"),
+		filepath.Join(duelRoot, "summary.json"),
+		filepath.Join(duelRoot, "final-board.json"),
+		filepath.Join(duelRoot, "events.json"),
+		filepath.Join(duelRoot, "trace.log"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected artifact %s: %v", path, err)
+		}
+	}
+
+	traceLog, err := os.ReadFile(filepath.Join(duelRoot, "trace.log"))
+	if err != nil {
+		t.Fatalf("read trace log: %v", err)
+	}
+	if !strings.Contains(string(traceLog), "trace smoke test") {
+		t.Fatalf("trace log = %q, want smoke test entry", string(traceLog))
+	}
+
+	duelSummary, err := os.ReadFile(filepath.Join(duelRoot, "summary.json"))
+	if err != nil {
+		t.Fatalf("read duel summary: %v", err)
+	}
+	if !strings.Contains(string(duelSummary), match.ID) {
+		t.Fatalf("duel summary missing match id: %s", string(duelSummary))
+	}
+}
+
+func TestPersistArenaPromptTraceStoresPerTurnPromptJSON(t *testing.T) {
+	resultsDir := t.TempDir()
+	s := &Server{arenaResultsDir: resultsDir}
+	duelIndex := 2
+	ctx := &streamLogContext{
+		ArenaID:   "arena-123",
+		MatchID:   "match-456",
+		BoardID:   "board-789",
+		DuelIndex: &duelIndex,
+	}
+	trace := &arenaPromptTrace{
+		Turn:                      7,
+		PromptNumber:              7,
+		BoardID:                   "board-789",
+		HeroID:                    "hero-alpha",
+		HeroName:                  "Alpha",
+		BotLabel:                  "Treasure Mind A",
+		Provider:                  "openai",
+		Model:                     "gpt-4o",
+		Strategy:                  "prefer treasure",
+		PromptStyle:               "smart",
+		LegalActions:              []string{"Move east", "Cast locate_treasury"},
+		SystemPrompt:              "system text",
+		UserPrompt:                "user text",
+		RawResponse:               "ACTION: 0\nREASON: move",
+		SelectedActionDescription: "Move east",
+		DecisionSource:            "llm",
+		SubmittedAction:           "moveeast",
+		QueueAccepted:             true,
+	}
+
+	if err := s.persistArenaPromptTrace(ctx, trace); err != nil {
+		t.Fatalf("persist arena prompt trace: %v", err)
+	}
+
+	path := filepath.Join(resultsDir, "arena-123", "matches", "match-456", "duels", "002", "prompts", "turn-0007", "hero-alpha.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read prompt trace: %v", err)
+	}
+	if !strings.Contains(string(data), "ACTION: 0") {
+		t.Fatalf("prompt trace missing raw response: %s", string(data))
+	}
+	if !strings.Contains(string(data), "\"promptStyle\": \"smart\"") {
+		t.Fatalf("prompt trace missing prompt style: %s", string(data))
+	}
+}
+
+func TestStreamLogContextPrefixUsesConciseArenaAndMatchIDs(t *testing.T) {
+	duelIndex := 3
+	ctx := &streamLogContext{
+		ArenaID:   "ea498bc6-a1ce-48b2-ae19-cd320641ec71",
+		MatchID:   "c1a02468-5467-4514-8649-5be4acc52122",
+		DuelIndex: &duelIndex,
+	}
+
+	got := ctx.prefix()
+	want := "[arena:ea498bc6][match:c1a02468][duel:3]"
+	if got != want {
+		t.Fatalf("prefix = %q, want %q", got, want)
 	}
 }
 

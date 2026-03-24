@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mmorph/engine/game"
@@ -171,14 +172,17 @@ func (s *Server) runArenaLoop(arenaID string) {
 		s.broadcastArenaUpdate(arenaID)
 
 		// Run the duel as a self-contained board simulation
-		leaderboard, turnReached, boardID := s.runArenaDuel(arena, matchID, duel)
+		leaderboard, turnReached, boardID, tokenStats, heroAssignments, finalSnap, allEvents := s.runArenaDuel(arena, matchID, duel)
 
-		if err := s.arenas.RecordDuelResult(arenaID, matchID, duelIndex, leaderboard, turnReached, boardID); err != nil {
+		if err := s.arenas.RecordDuelResult(arenaID, matchID, duelIndex, leaderboard, turnReached, boardID, tokenStats, heroAssignments); err != nil {
 			s.emitContextLog(ctx, fmt.Sprintf("error recording duel result: %v", err))
 			return
 		}
 
 		s.emitContextLog(ctx, fmt.Sprintf("complete turns=%d, winner=%s, board=%s", turnReached, leaderboardWinner(leaderboard), boardID))
+		if err := s.persistArenaArtifacts(arena, matchID, duelIndex, finalSnap, allEvents); err != nil {
+			s.emitContextLog(ctx, fmt.Sprintf("trace write failed: %v", err))
+		}
 
 		// Broadcast arena status update after duel completes
 		s.broadcastArenaUpdate(arenaID)
@@ -188,7 +192,7 @@ func (s *Server) runArenaLoop(arenaID string) {
 	}
 }
 
-func (s *Server) runArenaDuel(arena *game.Arena, matchID string, duel *game.DuelResult) ([]game.ScoreTrack, int, string) {
+func (s *Server) runArenaDuel(arena *game.Arena, matchID string, duel *game.DuelResult) ([]game.ScoreTrack, int, string, []game.DuelHeroTokenStats, []game.DuelHeroAssignment, game.BoardSnapshot, []game.EventRecord) {
 	arena.RLockBots()
 	bots := arena.CopyBots()
 	arena.RUnlockBots()
@@ -205,6 +209,8 @@ func (s *Server) runArenaDuel(arena *game.Arena, matchID string, duel *game.Duel
 		DuelIndex: &duelIndexRef,
 	}
 	heroBots := make(map[string]game.ArenaBotConfig, len(duel.BotPositions))
+	heroTokens := make(map[string]*heroTokenAccum, len(duel.BotPositions))
+	heroAssignments := make([]game.DuelHeroAssignment, 0, len(duel.BotPositions))
 
 	// Register bot heroes according to the position assignment
 	for spawnSlot := 0; spawnSlot < len(duel.BotPositions); spawnSlot++ {
@@ -226,6 +232,13 @@ func (s *Server) runArenaDuel(arena *game.Arena, matchID string, duel *game.Duel
 			continue
 		}
 		heroBots[hero.ID] = bot
+		heroTokens[hero.ID] = &heroTokenAccum{botIndex: botIdx}
+		heroAssignments = append(heroAssignments, game.DuelHeroAssignment{
+			HeroID:    hero.ID,
+			HeroName:  hero.Name,
+			BotIndex:  botIdx,
+			SpawnSlot: spawnSlot,
+		})
 	}
 
 	board.SetLifecycle(game.LifecycleRunning)
@@ -247,9 +260,13 @@ func (s *Server) runArenaDuel(arena *game.Arena, matchID string, duel *game.Duel
 			Started:         true,
 		})
 		board.AddSystemEvent(fmt.Sprintf("Turn %d begins — submission window (%dms).", board.Turn(), s.planningMs))
-		s.submitArenaBotActions(board, heroBots, ctx)
+		s.submitArenaBotActions(board, heroBots, heroTokens, ctx)
 		s.broadcastSnapshot(board.Snapshot(s.getTurnState(board)))
-		time.Sleep(time.Duration(s.planningMs) * time.Millisecond)
+
+		// Sleep only for remaining submit window
+		if remaining := time.Until(submitEnd); remaining > 0 {
+			time.Sleep(remaining)
+		}
 
 		resolveStart := time.Now()
 		resolveEnd := resolveStart.Add(time.Duration(s.actionMs) * time.Millisecond)
@@ -284,29 +301,105 @@ func (s *Server) runArenaDuel(arena *game.Arena, matchID string, duel *game.Duel
 
 	turnState := game.TurnState{Turn: board.Turn(), Phase: game.PhaseSubmit}
 	snap := board.Snapshot(turnState)
+	allEvents := board.EventsAfterID("")
 
-	return snap.Leaderboard, board.Turn(), boardID
+	// Collect token stats
+	var tokenStats []game.DuelHeroTokenStats
+	for heroID, acc := range heroTokens {
+		if acc.llmCalls > 0 || acc.fallbacks > 0 {
+			tokenStats = append(tokenStats, game.DuelHeroTokenStats{
+				HeroID:           heroID,
+				BotIndex:         acc.botIndex,
+				PromptTokens:     acc.promptTokens,
+				CompletionTokens: acc.completionTokens,
+				TotalTokens:      acc.totalTokens,
+				LLMCalls:         acc.llmCalls,
+				Fallbacks:        acc.fallbacks,
+			})
+		}
+	}
+
+	return snap.Leaderboard, board.Turn(), boardID, tokenStats, heroAssignments, snap, allEvents
 }
 
-func (s *Server) submitArenaBotActions(board *game.Board, heroBots map[string]game.ArenaBotConfig, ctx *streamLogContext) {
+func (s *Server) submitArenaBotActions(board *game.Board, heroBots map[string]game.ArenaBotConfig, heroTokens map[string]*heroTokenAccum, ctx *streamLogContext) {
 	heroIDs := make([]string, 0, len(heroBots))
 	for heroID := range heroBots {
 		heroIDs = append(heroIDs, heroID)
 	}
 	sort.Strings(heroIDs)
 
-	for _, heroID := range heroIDs {
-		bot := heroBots[heroID]
-		action, ok := chooseArenaBotAction(board, heroID, bot)
-		if !ok {
+	// Determine LLM call timeout: leave 200ms buffer within the submit window
+	llmTimeout := time.Duration(s.planningMs-200) * time.Millisecond
+	if llmTimeout < 500*time.Millisecond {
+		llmTimeout = 500 * time.Millisecond
+	}
+
+	type actionResult struct {
+		heroID string
+		action game.HeroAction
+		ok     bool
+		usage  *llmResult
+		used   string // "llm" or "heuristic"
+	}
+
+	results := make([]actionResult, len(heroIDs))
+	var wg sync.WaitGroup
+
+	for i, heroID := range heroIDs {
+		wg.Add(1)
+		go func(idx int, hid string, bot game.ArenaBotConfig) {
+			defer wg.Done()
+
+			// Try LLM first
+			action, ok, usage := chooseArenaActionViaLLM(board, hid, bot, llmTimeout)
+			if ok {
+				results[idx] = actionResult{heroID: hid, action: action, ok: true, usage: usage, used: "llm"}
+				return
+			}
+
+			// Fall back to heuristic
+			action, ok = chooseArenaBotAction(board, hid, bot)
+			results[idx] = actionResult{heroID: hid, action: action, ok: ok, usage: usage, used: "heuristic"}
+		}(i, heroID, heroBots[heroID])
+	}
+
+	wg.Wait()
+
+	for _, res := range results {
+		if !res.ok {
 			continue
 		}
-		accepted, msg := board.SubmitAction(heroID, action)
+
+		// Track token usage
+		if acc, exists := heroTokens[res.heroID]; exists {
+			if res.usage != nil {
+				acc.promptTokens += res.usage.promptTokens
+				acc.completionTokens += res.usage.completionTokens
+				acc.totalTokens += res.usage.totalTokens
+				acc.llmCalls++
+			}
+			if res.used == "heuristic" {
+				acc.fallbacks++
+			}
+		}
+
+		bot := heroBots[res.heroID]
+		accepted, msg := board.SubmitAction(res.heroID, res.action)
+		if res.usage != nil && res.usage.trace != nil {
+			res.usage.trace.DecisionSource = res.used
+			res.usage.trace.SubmittedAction = fmt.Sprintf("%s%s", res.action.Kind, dirSuffix(res.action.Direction))
+			res.usage.trace.QueueAccepted = accepted
+			res.usage.trace.QueueMessage = msg
+			if err := s.persistArenaPromptTrace(ctx, res.usage.trace); err != nil {
+				s.emitContextLog(ctx, fmt.Sprintf("prompt trace write failed: %v", err))
+			}
+		}
 		if accepted {
-			s.emitContextLog(ctx, fmt.Sprintf("%s queued %s%s", heroID, action.Kind, dirSuffix(action.Direction)))
+			s.emitContextLog(ctx, fmt.Sprintf("%s queued %s%s [%s]", res.heroID, res.action.Kind, dirSuffix(res.action.Direction), res.used))
 			continue
 		}
-		s.emitContextLog(ctx, fmt.Sprintf("failed to queue action for %s (%s): %s", heroID, bot.Label, msg))
+		s.emitContextLog(ctx, fmt.Sprintf("failed to queue action for %s (%s): %s", res.heroID, bot.Label, msg))
 	}
 }
 
@@ -324,10 +417,32 @@ func chooseArenaBotAction(board *game.Board, heroID string, bot game.ArenaBotCon
 		return game.HeroAction{Kind: game.ActionWait}, true
 	}
 
+	moveActions := make([]game.LegalAction, 0)
+	moveByDirection := make(map[game.Direction]game.HeroAction)
+	var restAction *game.HeroAction
+	var waitAction *game.HeroAction
+	for _, action := range actions {
+		switch action.Kind {
+		case game.ActionMove:
+			moveActions = append(moveActions, action)
+			moveByDirection[action.Direction] = action.HeroAction
+		case game.ActionRest:
+			copy := action.HeroAction
+			restAction = &copy
+		case game.ActionWait:
+			copy := action.HeroAction
+			waitAction = &copy
+		}
+	}
+
 	strategy := strings.ToLower(strings.TrimSpace(bot.Strategy))
 	isAggressive := strings.Contains(strategy, "berserker") || strings.Contains(strategy, "kill") || strings.Contains(strategy, "combat")
 	isExplorer := strings.Contains(strategy, "explor") || strings.Contains(strategy, "map")
 	isTreasure := strings.Contains(strategy, "treasure") || strings.Contains(strategy, "loot") || strings.Contains(strategy, "gold")
+	restHeal := hero.Stats.MaxHp - hero.Stats.Hp
+	if restHeal > game.CFG.RestHeal {
+		restHeal = game.CFG.RestHeal
+	}
 
 	if hero.Stats.Hp <= hero.Stats.MaxHp/2 {
 		for _, action := range actions {
@@ -371,10 +486,16 @@ func chooseArenaBotAction(board *game.Board, heroID string, bot game.ArenaBotCon
 		}
 	}
 
-	moveActions := make([]game.LegalAction, 0)
-	for _, action := range actions {
-		if action.Kind == game.ActionMove {
-			moveActions = append(moveActions, action)
+	for _, targets := range heuristicTargetGroups(vision, isAggressive, isExplorer, isTreasure) {
+		if len(targets) == 0 {
+			continue
+		}
+		direction, ok := board.NextStepToward(heroID, targets)
+		if !ok {
+			continue
+		}
+		if action, exists := moveByDirection[direction]; exists {
+			return action, true
 		}
 	}
 
@@ -410,17 +531,116 @@ func chooseArenaBotAction(board *game.Board, heroID string, bot game.ArenaBotCon
 		return action.HeroAction, true
 	}
 
-	for _, action := range moveActions {
-		return action.HeroAction, true
-	}
-
-	for _, action := range actions {
-		if action.Kind == game.ActionRest {
-			return action.HeroAction, true
+	if hero.Fatigue >= 65 {
+		if restHeal > 0 && restAction != nil {
+			return *restAction, true
+		}
+		if waitAction != nil {
+			return *waitAction, true
+		}
+		if restAction != nil && hero.Fatigue >= 80 {
+			return *restAction, true
 		}
 	}
 
+	if waitAction != nil {
+		return *waitAction, true
+	}
+
+	if restHeal > 0 && restAction != nil {
+		return *restAction, true
+	}
+
 	return game.HeroAction{Kind: game.ActionWait}, true
+}
+
+func heuristicTargetGroups(vision *game.VisionData, isAggressive, isExplorer, isTreasure bool) [][]game.Position {
+	groups := make([][]game.Position, 0, 6)
+	if vision == nil || vision.Hero == nil {
+		return groups
+	}
+
+	if isAggressive {
+		if positions := adjacentApproachTargets(visibleMonsterPositions(vision)); len(positions) > 0 {
+			groups = append(groups, positions)
+		}
+		if positions := discoveryTargets(vision, game.SpellLocateMonsters, true); len(positions) > 0 {
+			groups = append(groups, positions)
+		}
+	}
+
+	if positions := visibleItemPositions(vision); len(positions) > 0 {
+		groups = append(groups, positions)
+	}
+
+	if isTreasure || isExplorer {
+		if positions := discoveryTargets(vision, game.SpellLocateTreasury, false); len(positions) > 0 {
+			groups = append(groups, positions)
+		}
+	}
+
+	if isExplorer {
+		if positions := discoveryTargets(vision, game.SpellLocateBuildings, false); len(positions) > 0 {
+			groups = append(groups, positions)
+		}
+		if positions := discoveryTargets(vision, game.SpellLocatePrisoner, false); len(positions) > 0 {
+			groups = append(groups, positions)
+		}
+	}
+
+	if positions := visibleNpcPositions(vision); len(positions) > 0 {
+		groups = append(groups, positions)
+	}
+
+	return groups
+}
+
+func visibleMonsterPositions(vision *game.VisionData) []game.Position {
+	positions := make([]game.Position, 0, len(vision.VisibleMonsters))
+	for _, monster := range vision.VisibleMonsters {
+		positions = append(positions, monster.Position)
+	}
+	return positions
+}
+
+func visibleItemPositions(vision *game.VisionData) []game.Position {
+	positions := make([]game.Position, 0, len(vision.VisibleItems))
+	for _, item := range vision.VisibleItems {
+		positions = append(positions, item.Position)
+	}
+	return positions
+}
+
+func visibleNpcPositions(vision *game.VisionData) []game.Position {
+	positions := make([]game.Position, 0, len(vision.VisibleNpcs))
+	for _, npc := range vision.VisibleNpcs {
+		positions = append(positions, npc.Position)
+	}
+	return positions
+}
+
+func discoveryTargets(vision *game.VisionData, spell game.SpellKind, adjacent bool) []game.Position {
+	positions := make([]game.Position, 0)
+	for _, discovery := range vision.SpellDiscoveries {
+		if discovery.Spell != spell {
+			continue
+		}
+		positions = append(positions, discovery.Positions...)
+	}
+	if adjacent {
+		return adjacentApproachTargets(positions)
+	}
+	return positions
+}
+
+func adjacentApproachTargets(targets []game.Position) []game.Position {
+	positions := make([]game.Position, 0, len(targets)*4)
+	for _, target := range targets {
+		for _, direction := range game.AllDirections {
+			positions = append(positions, game.MoveInDir(target, direction))
+		}
+	}
+	return positions
 }
 
 func (s *Server) broadcastArenaUpdate(arenaID string) {

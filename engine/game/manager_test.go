@@ -48,3 +48,27 @@ func TestManagerRegisterHeroDistributesAcrossBoards(t *testing.T) {
 		}
 	}
 }
+
+func TestManagerWithFixedSeedReusesConfiguredBoardSeedAcrossResets(t *testing.T) {
+	mgr := NewManagerWithSeed("benchmark-seed")
+	initial := mgr.ActiveBoard()
+	if initial == nil {
+		t.Fatal("expected initial board")
+	}
+	if got := initial.Seed(); got != "benchmark-seed" {
+		t.Fatalf("initial board seed = %q, want %q", got, "benchmark-seed")
+	}
+	initialID := initial.ID
+
+	mgr.CompleteBoard(initialID, "test reset")
+	next := mgr.EnsureOpenBoard()
+	if next == nil {
+		t.Fatal("expected next board")
+	}
+	if next.ID == initialID {
+		t.Fatalf("next board id = %q, want a fresh board distinct from %q", next.ID, initialID)
+	}
+	if got := next.Seed(); got != "benchmark-seed" {
+		t.Fatalf("next board seed = %q, want %q", got, "benchmark-seed")
+	}
+}

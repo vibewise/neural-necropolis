@@ -20,9 +20,12 @@ export function FeedPanel(props: FeedPanelProps) {
     return (
       <>
         {feedItems.map((item) => (
-          <article key={item.id} className="feed-msg">
+          <article
+            key={item.id}
+            className={`feed-msg${item.tone ? ` feed-msg--${item.tone}` : ""}`}
+          >
             <div className="feed-meta">
-              <span>{item.label}</span>
+              <span className="feed-label">{item.label}</span>
             </div>
             <div className="feed-text">{item.detail}</div>
           </article>
@@ -42,9 +45,12 @@ export function FeedPanel(props: FeedPanelProps) {
       ) : (
         <div className="feed-list capped-feed">
           {feedItems.map((item) => (
-            <article key={item.id} className="feed-entry">
+            <article
+              key={item.id}
+              className={`feed-entry${item.tone ? ` feed-entry--${item.tone}` : ""}`}
+            >
               <div className="feed-entry-header">
-                <strong>{item.label}</strong>
+                <strong className="feed-label">{item.label}</strong>
               </div>
               <p>{item.detail}</p>
             </article>

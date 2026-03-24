@@ -39,24 +39,49 @@ const (
 // ── Bot configuration for arena ──
 
 type ArenaBotConfig struct {
-	Label    string `json:"label"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Strategy string `json:"strategy"` // e.g. "berserker", "explorer", "treasure-hunter"
+	Label           string  `json:"label"`
+	Provider        string  `json:"provider"`
+	Model           string  `json:"model"`
+	Strategy        string  `json:"strategy"` // e.g. "berserker", "explorer", "treasure-hunter"
+	PromptStyle     string  `json:"promptStyle,omitempty"`
+	MaxOutputTokens int     `json:"maxOutputTokens"` // 0 → default 180
+	Temperature     float64 `json:"temperature"`     // 0 → default 0.7
+	ReasoningEffort string  `json:"reasoningEffort,omitempty"`
+}
+
+// DuelHeroTokenStats tracks LLM token usage for one hero in a duel.
+type DuelHeroTokenStats struct {
+	HeroID           string `json:"heroId"`
+	BotIndex         int    `json:"botIndex"`
+	PromptTokens     int    `json:"promptTokens"`
+	CompletionTokens int    `json:"completionTokens"`
+	TotalTokens      int    `json:"totalTokens"`
+	LLMCalls         int    `json:"llmCalls"`
+	Fallbacks        int    `json:"fallbacks"`
+}
+
+// DuelHeroAssignment records which configured bot controlled a specific hero.
+type DuelHeroAssignment struct {
+	HeroID    string `json:"heroId"`
+	HeroName  string `json:"heroName"`
+	BotIndex  int    `json:"botIndex"`
+	SpawnSlot int    `json:"spawnSlot"`
 }
 
 // ── Duel result ──
 
 type DuelResult struct {
-	DuelIndex    int          `json:"duelIndex"`
-	Status       DuelStatus   `json:"status"`
-	BoardID      string       `json:"boardId"`
-	Seed         string       `json:"seed"`
-	MaxTurns     int          `json:"maxTurns"`
-	Leaderboard  []ScoreTrack `json:"leaderboard"`
-	TurnReached  int          `json:"turnReached"`
-	CompletedAt  *int64       `json:"completedAt,omitempty"`
-	BotPositions []int        `json:"botPositions"` // which bot config index got which spawn slot
+	DuelIndex       int                  `json:"duelIndex"`
+	Status          DuelStatus           `json:"status"`
+	BoardID         string               `json:"boardId"`
+	Seed            string               `json:"seed"`
+	MaxTurns        int                  `json:"maxTurns"`
+	Leaderboard     []ScoreTrack         `json:"leaderboard"`
+	TurnReached     int                  `json:"turnReached"`
+	CompletedAt     *int64               `json:"completedAt,omitempty"`
+	BotPositions    []int                `json:"botPositions"` // which bot config index got which spawn slot
+	HeroAssignments []DuelHeroAssignment `json:"heroAssignments,omitempty"`
+	TokenStats      []DuelHeroTokenStats `json:"tokenStats,omitempty"`
 }
 
 // ── Match ──
@@ -158,18 +183,29 @@ func (a *Arena) computeStandingsLocked() []ArenaBotStanding {
 			if duel.Status != DuelStatusComplete {
 				continue
 			}
+			heroToBot := make(map[string]int, len(duel.HeroAssignments))
+			for _, assignment := range duel.HeroAssignments {
+				heroToBot[assignment.HeroID] = assignment.BotIndex
+			}
 			for rank, entry := range duel.Leaderboard {
-				// Find which bot config index this hero corresponds to
-				// BotPositions[spawnSlot] = botConfigIndex
-				if rank < len(duel.BotPositions) {
-					botIdx := duel.BotPositions[rank]
-					if botIdx >= 0 && botIdx < len(standings) {
-						standings[botIdx].TotalScore += entry.TotalScore
-						standings[botIdx].DuelsPlayed++
-						if rank == 0 {
-							standings[botIdx].Wins++
-						}
+				botIdx, ok := heroToBot[entry.HeroID]
+				if !ok && rank < len(duel.BotPositions) {
+					botIdx = duel.BotPositions[rank]
+				}
+				if botIdx >= 0 && botIdx < len(standings) {
+					standings[botIdx].TotalScore += entry.TotalScore
+					standings[botIdx].DuelsPlayed++
+					if rank == 0 {
+						standings[botIdx].Wins++
 					}
+				}
+			}
+			// Aggregate token stats
+			for _, ts := range duel.TokenStats {
+				if ts.BotIndex >= 0 && ts.BotIndex < len(standings) {
+					standings[ts.BotIndex].TotalPromptTokens += ts.PromptTokens
+					standings[ts.BotIndex].TotalCompletionTokens += ts.CompletionTokens
+					standings[ts.BotIndex].TotalLLMCalls += ts.LLMCalls
 				}
 			}
 		}
@@ -181,13 +217,16 @@ func (a *Arena) computeStandingsLocked() []ArenaBotStanding {
 // ── Arena snapshots for API responses ──
 
 type ArenaBotStanding struct {
-	BotIndex    int    `json:"botIndex"`
-	Label       string `json:"label"`
-	Provider    string `json:"provider"`
-	Model       string `json:"model"`
-	Wins        int    `json:"wins"`
-	DuelsPlayed int    `json:"duelsPlayed"`
-	TotalScore  int    `json:"totalScore"`
+	BotIndex              int    `json:"botIndex"`
+	Label                 string `json:"label"`
+	Provider              string `json:"provider"`
+	Model                 string `json:"model"`
+	Wins                  int    `json:"wins"`
+	DuelsPlayed           int    `json:"duelsPlayed"`
+	TotalScore            int    `json:"totalScore"`
+	TotalPromptTokens     int    `json:"totalPromptTokens"`
+	TotalCompletionTokens int    `json:"totalCompletionTokens"`
+	TotalLLMCalls         int    `json:"totalLlmCalls"`
 }
 
 type ArenaMatchSnapshot struct {
@@ -393,7 +432,7 @@ func (am *ArenaManager) StartArena(arenaID string) error {
 }
 
 // RecordDuelResult stores the result of a completed duel.
-func (am *ArenaManager) RecordDuelResult(arenaID, matchID string, duelIndex int, leaderboard []ScoreTrack, turnReached int, boardID string) error {
+func (am *ArenaManager) RecordDuelResult(arenaID, matchID string, duelIndex int, leaderboard []ScoreTrack, turnReached int, boardID string, tokenStats []DuelHeroTokenStats, heroAssignments []DuelHeroAssignment) error {
 	am.mu.RLock()
 	arena := am.arenas[arenaID]
 	am.mu.RUnlock()
@@ -427,6 +466,8 @@ func (am *ArenaManager) RecordDuelResult(arenaID, matchID string, duelIndex int,
 	match.Duels[duelIndex].TurnReached = turnReached
 	match.Duels[duelIndex].CompletedAt = &now
 	match.Duels[duelIndex].BoardID = boardID
+	match.Duels[duelIndex].TokenStats = tokenStats
+	match.Duels[duelIndex].HeroAssignments = heroAssignments
 
 	// Check if all duels are complete
 	allDone := true

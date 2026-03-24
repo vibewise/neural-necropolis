@@ -21,21 +21,21 @@ export function useDashboardQueries(options: UseDashboardQueriesOptions) {
     queryKey: ["health", apiBase],
     queryFn: () => fetchHealth(apiBase),
     retry: false,
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
   });
 
   const boardsQuery = useQuery({
     queryKey: ["boards", apiBase],
     queryFn: () => fetchBoards(apiBase),
     retry: false,
-    refetchInterval: 7_500,
+    refetchInterval: 2_000,
   });
 
   const snapshotQuery = useQuery({
     queryKey: ["dashboard", apiBase, boardId ?? "active"],
     queryFn: () => fetchDashboard(apiBase, boardId),
     retry: false,
-    refetchInterval: 5_000,
+    refetchInterval: 1_000,
   });
 
   const completedBoardsQuery = useQuery({
@@ -49,7 +49,7 @@ export function useDashboardQueries(options: UseDashboardQueriesOptions) {
     queryKey: ["leaderboard", apiBase],
     queryFn: () => fetchLeaderboard(apiBase),
     retry: false,
-    refetchInterval: 10_000,
+    refetchInterval: 2_000,
   });
 
   const seedQuery = useQuery({

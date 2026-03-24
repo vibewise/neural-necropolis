@@ -11,6 +11,7 @@ import type {
   ArenaSummary,
   ArenaBotStanding,
   ArenaMatchSnapshot,
+  DuelHeroTokenStats,
   DuelResult,
   CreateArenaRequest,
   AddMatchRequest,
@@ -103,12 +104,30 @@ const KNOWN_STRATEGIES = [
   { value: "treasure-hunter", label: "Treasure Hunter" },
 ];
 
+const PROMPT_STYLE_OPTIONS = [
+  {
+    value: "smart",
+    label: "Smart",
+    description:
+      "Adds anti-loop guidance and pushes the bot to act on known information.",
+  },
+  {
+    value: "naive",
+    label: "Naive",
+    description:
+      "Keeps a looser baseline prompt so you can compare behavior against smart mode.",
+  },
+];
+
 function archetypeToBot(arch: Archetype, index: number): ArenaBotConfig {
   return {
     label: `${arch.label} ${String.fromCharCode(65 + index)}`,
     provider: "openai",
     model: "gpt-4o",
     strategy: arch.overrides.strategy ?? "balanced",
+    promptStyle: "smart",
+    temperature: 0.7,
+    maxOutputTokens: 300,
   };
 }
 
@@ -178,24 +197,32 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
     }
     return ids;
   }, [detail]);
+  const availableBoardIds = useMemo(
+    () => new Set(boards.map((board) => board.boardId)),
+    [boards],
+  );
+  const availableArenaBoardIds = useMemo(
+    () => arenaBoardIds.filter((boardId) => availableBoardIds.has(boardId)),
+    [arenaBoardIds, availableBoardIds],
+  );
   const focusBoardId = useMemo(() => {
-    for (let i = arenaBoardIds.length - 1; i >= 0; i--) {
-      if (arenaBoardIds[i]) {
-        return arenaBoardIds[i];
+    for (let i = availableArenaBoardIds.length - 1; i >= 0; i--) {
+      if (availableArenaBoardIds[i]) {
+        return availableArenaBoardIds[i];
       }
     }
     return null;
-  }, [arenaBoardIds]);
+  }, [availableArenaBoardIds]);
   const visibleBoards = useMemo(() => {
     if (!detail) {
       return boards;
     }
-    if (arenaBoardIds.length === 0) {
+    if (availableArenaBoardIds.length === 0) {
       return [] as typeof boards;
     }
-    const allowed = new Set(arenaBoardIds);
+    const allowed = new Set(availableArenaBoardIds);
     return boards.filter((board) => allowed.has(board.boardId));
-  }, [boards, detail, arenaBoardIds]);
+  }, [availableArenaBoardIds, boards, detail]);
   const selectedBoardStillVisible = useMemo(
     () =>
       selectedBoardId
@@ -209,10 +236,6 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
       return;
     }
     if (!detail) {
-      return;
-    }
-    if (!selectedBoardId && focusBoardId) {
-      setSelectedBoardId(focusBoardId);
       return;
     }
     if (selectedBoardId && !selectedBoardStillVisible) {
@@ -277,6 +300,18 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
     [detail, focusTarget, streamLogs],
   );
 
+  const setFocusedBoardIfAvailable = useCallback(
+    (boardId: string | null | undefined) => {
+      if (!boardId) {
+        return;
+      }
+      if (availableBoardIds.has(boardId)) {
+        setSelectedBoardId(boardId);
+      }
+    },
+    [availableBoardIds, setSelectedBoardId],
+  );
+
   const focusArena = useCallback(() => {
     setFocusTarget({ kind: "arena" });
   }, []);
@@ -287,12 +322,12 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
 
   const focusDuel = useCallback(
     (matchId: string, duel: DuelResult) => {
-      if (duel.boardId) {
-        setSelectedBoardId(duel.boardId);
+      if (mode !== "overview" || duel.status === "running") {
+        setFocusedBoardIfAvailable(duel.boardId);
       }
       setFocusTarget({ kind: "duel", matchId, duelIndex: duel.duelIndex });
     },
-    [setSelectedBoardId],
+    [mode, setFocusedBoardIfAvailable],
   );
 
   const focusBot = useCallback(
@@ -301,8 +336,8 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
         const duel = detail?.matches
           .find((match) => match.id === matchId)
           ?.duels.find((entry) => entry.duelIndex === duelIndex);
-        if (duel?.boardId) {
-          setSelectedBoardId(duel.boardId);
+        if (mode !== "overview" || duel?.status === "running") {
+          setFocusedBoardIfAvailable(duel?.boardId);
         }
         setFocusTarget({ kind: "bot", matchId, duelIndex, botIndex });
         return;
@@ -315,8 +350,8 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
         .reverse()
         .find(({ duel }) => duel.botPositions.includes(botIndex));
 
-      if (latestDuel?.duel.boardId) {
-        setSelectedBoardId(latestDuel.duel.boardId);
+      if (mode !== "overview" || latestDuel?.duel.status === "running") {
+        setFocusedBoardIfAvailable(latestDuel?.duel.boardId);
       }
       setFocusTarget({
         kind: "bot",
@@ -325,7 +360,7 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
         botIndex,
       });
     },
-    [detail, setSelectedBoardId],
+    [detail, mode, setFocusedBoardIfAvailable],
   );
 
   useEffect(() => {
@@ -494,8 +529,8 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
               <div>
                 <h2>Matches & Duels</h2>
                 <p>
-                  Select a match, duel, or bot to drive the board focus and the
-                  detail drawer below.
+                  Select a match, duel, or bot to drive the detail drawer below.
+                  Running duels can also take over the map focus.
                 </p>
               </div>
               <div className="arena-overview-trackbar-meta">
@@ -717,6 +752,7 @@ export function ArenaView({ apiBase, mode }: ArenaViewProps) {
             detail={detail}
             snapshot={snapshot}
             selectedBoard={selectedBoard}
+            visibleBoardIds={availableBoardIds}
             focusTarget={focusTarget}
             selectedMatch={selectedMatch}
             selectedDuel={selectedDuel}
@@ -867,6 +903,7 @@ function FocusDetailPanel({
   detail,
   snapshot,
   selectedBoard,
+  visibleBoardIds,
   focusTarget,
   selectedMatch,
   selectedDuel,
@@ -882,6 +919,7 @@ function FocusDetailPanel({
     | ReturnType<typeof useDashboardQueries>["snapshotQuery"]["data"]
     | null;
   selectedBoard: ReturnType<typeof deriveSelectedBoardSummary>;
+  visibleBoardIds: Set<string>;
   focusTarget: ArenaFocusTarget;
   selectedMatch: ArenaMatchSnapshot | null;
   selectedDuel: DuelResult | null;
@@ -897,6 +935,17 @@ function FocusDetailPanel({
   useEffect(() => {
     setExpanded(true);
   }, [focusTarget]);
+
+  const selectedDuelBoardVisible = useMemo(() => {
+    if (!selectedDuel?.boardId) {
+      return false;
+    }
+    return visibleBoardIds.has(selectedDuel.boardId);
+  }, [selectedDuel, visibleBoardIds]);
+  const selectedDuelLeaderboard = useMemo(
+    () => selectedDuel?.leaderboard ?? [],
+    [selectedDuel],
+  );
 
   const contextLabel = useMemo(() => {
     if (!detail) {
@@ -1054,6 +1103,13 @@ function FocusDetailPanel({
                     </span>
                   </div>
                 </div>
+                {!selectedDuelBoardVisible && (
+                  <div className="empty-state" style={{ marginTop: 12 }}>
+                    This duel board is no longer in the active board set, so the
+                    map stays on the current visible board while the focus
+                    drawer shows duel details.
+                  </div>
+                )}
               </section>
               <section className="arena-focus-card">
                 <h3>Participants</h3>
@@ -1078,9 +1134,9 @@ function FocusDetailPanel({
               </section>
               <section className="arena-focus-card span-two">
                 <h3>Leaderboard</h3>
-                {selectedDuel.leaderboard.length > 0 ? (
+                {selectedDuelLeaderboard.length > 0 ? (
                   <div className="focus-duel-leaderboard">
-                    {selectedDuel.leaderboard.map((entry) => {
+                    {selectedDuelLeaderboard.map((entry) => {
                       const botIndex = selectedDuel.botPositions.find(
                         (candidate) =>
                           detail?.bots[candidate]?.label === entry.heroName,
@@ -1110,7 +1166,9 @@ function FocusDetailPanel({
                   </div>
                 ) : (
                   <div className="empty-state">
-                    No duel scores recorded yet.
+                    {selectedDuel.status === "running"
+                      ? "This duel is still running. Scores will appear once results are recorded."
+                      : "No duel scores recorded yet."}
                   </div>
                 )}
               </section>
@@ -1140,6 +1198,12 @@ function FocusDetailPanel({
                     <span className="snapshot-label">Strategy</span>
                     <span className="snapshot-value">
                       {selectedBot.strategy}
+                    </span>
+                  </div>
+                  <div className="snapshot-row">
+                    <span className="snapshot-label">Prompt Style</span>
+                    <span className="snapshot-value">
+                      {selectedBot.promptStyle ?? "smart"}
                     </span>
                   </div>
                 </div>
@@ -1175,6 +1239,28 @@ function FocusDetailPanel({
                               selectedStanding.duelsPlayed
                             ).toFixed(1)
                           : "—"}
+                      </span>
+                    </div>
+                    <div className="snapshot-row">
+                      <span className="snapshot-label">Prompt Tokens</span>
+                      <span className="snapshot-value">
+                        {(
+                          selectedStanding.totalPromptTokens ?? 0
+                        ).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="snapshot-row">
+                      <span className="snapshot-label">Completion Tokens</span>
+                      <span className="snapshot-value">
+                        {(
+                          selectedStanding.totalCompletionTokens ?? 0
+                        ).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="snapshot-row">
+                      <span className="snapshot-label">LLM Calls</span>
+                      <span className="snapshot-value">
+                        {selectedStanding.totalLlmCalls ?? 0}
                       </span>
                     </div>
                   </div>
@@ -1294,6 +1380,10 @@ function ArenaCreator({
         label: prev[index].label,
         provider: prev[index].provider,
         model: prev[index].model,
+        temperature: prev[index].temperature,
+        maxOutputTokens: prev[index].maxOutputTokens,
+        promptStyle: prev[index].promptStyle,
+        reasoningEffort: prev[index].reasoningEffort,
         archetypeId: arch.id,
       };
       return next;
@@ -1301,7 +1391,7 @@ function ArenaCreator({
   }, []);
 
   const updateBot = useCallback(
-    (index: number, field: keyof ArenaBotConfig, value: string) => {
+    (index: number, field: keyof ArenaBotConfig, value: string | number) => {
       setBots((prev) => {
         const next = [...prev];
         next[index] = { ...next[index], [field]: value };
@@ -1330,6 +1420,7 @@ function ArenaCreator({
         model: "gpt-4o",
         strategy:
           build.draft.strategy || arch?.overrides.strategy || "balanced",
+        promptStyle: "smart",
         archetypeId: build.archetypeId ?? (arch?.id || ARCHETYPES[0].id),
       },
     ]);
@@ -1441,6 +1532,14 @@ function ArenaCreator({
           </div>
         </div>
 
+        <div className="av-inline-note av-inline-note-full">
+          Provider and model are configured per agent. You can mix providers in
+          one arena, for example OpenAI on one bot and Groq with Llama on the
+          other, as long as the matching API keys are available to the engine.
+          Prompt Style lets you compare a smarter anti-loop prompt against a
+          naive baseline on the same roster.
+        </div>
+
         <div className="av-bots-grid">
           {bots.map((bot, i) => {
             const activeArch = ARCHETYPES.find((a) => a.id === bot.archetypeId);
@@ -1541,6 +1640,77 @@ function ArenaCreator({
                         <option value="__custom">Custom...</option>
                       </select>
                     </label>
+                    <label className="av-field-sm">
+                      <span>Prompt Style</span>
+                      <select
+                        value={bot.promptStyle ?? "smart"}
+                        onChange={(e) =>
+                          updateBot(i, "promptStyle", e.target.value)
+                        }
+                      >
+                        {PROMPT_STYLE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="av-field-sm">
+                      <span>Temperature</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        value={bot.temperature ?? 0.7}
+                        onChange={(e) =>
+                          updateBot(i, "temperature", Number(e.target.value))
+                        }
+                      />
+                    </label>
+                    <label className="av-field-sm">
+                      <span>Max Output Tokens</span>
+                      <input
+                        type="number"
+                        min={32}
+                        max={4096}
+                        step={32}
+                        value={bot.maxOutputTokens ?? 300}
+                        onChange={(e) =>
+                          updateBot(
+                            i,
+                            "maxOutputTokens",
+                            Number(e.target.value),
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="av-field-sm">
+                      <span>Reasoning Effort</span>
+                      <select
+                        value={bot.reasoningEffort ?? ""}
+                        onChange={(e) =>
+                          updateBot(
+                            i,
+                            "reasoningEffort",
+                            e.target.value || (undefined as unknown as string),
+                          )
+                        }
+                      >
+                        <option value="">Default</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </label>
+                    <div className="av-inline-note av-inline-note-full">
+                      {
+                        PROMPT_STYLE_OPTIONS.find(
+                          (option) =>
+                            option.value === (bot.promptStyle ?? "smart"),
+                        )?.description
+                      }
+                    </div>
                   </div>
                 )}
               </div>
@@ -1563,13 +1733,27 @@ function MatchConfigurator({
   onAddMatch: (req: AddMatchRequest) => void;
   busy: boolean;
 }) {
-  const [duelCount, setDuelCount] = useState(10);
-  const [maxTurns, setMaxTurns] = useState(100);
+  const [duelCount, setDuelCount] = useState("10");
+  const [maxTurns, setMaxTurns] = useState("100");
+
+  const parsedDuelCount = Number.parseInt(duelCount, 10);
+  const parsedMaxTurns = Number.parseInt(maxTurns, 10);
+  const duelCountValid =
+    Number.isFinite(parsedDuelCount) &&
+    parsedDuelCount >= 2 &&
+    parsedDuelCount % 2 === 0;
+  const maxTurnsValid = Number.isFinite(parsedMaxTurns) && parsedMaxTurns >= 10;
 
   const handleAdd = useCallback(() => {
-    if (duelCount < 2 || duelCount % 2 !== 0) return;
-    onAddMatch({ duelCount, maxTurns: maxTurns > 0 ? maxTurns : 100 });
-  }, [duelCount, maxTurns, onAddMatch]);
+    if (!duelCountValid || !maxTurnsValid) return;
+    onAddMatch({ duelCount: parsedDuelCount, maxTurns: parsedMaxTurns });
+  }, [
+    duelCountValid,
+    maxTurnsValid,
+    onAddMatch,
+    parsedDuelCount,
+    parsedMaxTurns,
+  ]);
 
   return (
     <div className="av-card">
@@ -1583,10 +1767,7 @@ function MatchConfigurator({
               min={2}
               step={2}
               value={duelCount}
-              onChange={(e) => {
-                const val = Number(e.target.value || 2);
-                setDuelCount(val % 2 === 0 ? val : val + 1);
-              }}
+              onChange={(e) => setDuelCount(e.target.value)}
             />
           </label>
           <label className="av-field">
@@ -1595,22 +1776,24 @@ function MatchConfigurator({
               type="number"
               min={10}
               value={maxTurns}
-              onChange={(e) => setMaxTurns(Number(e.target.value || 100))}
+              onChange={(e) => setMaxTurns(e.target.value)}
             />
           </label>
         </div>
         <button
           type="button"
-          disabled={!adminToken || busy || duelCount < 2 || duelCount % 2 !== 0}
+          disabled={!adminToken || busy || !duelCountValid || !maxTurnsValid}
           onClick={handleAdd}
         >
           + Add Match
         </button>
-        {duelCount % 2 !== 0 && (
+        {duelCount !== "" && !duelCountValid && (
           <div className="av-hint">
-            Duel count must be even so each bot gets each spawn position
-            equally.
+            Duel count must be an even number of at least 2.
           </div>
+        )}
+        {maxTurns !== "" && !maxTurnsValid && (
+          <div className="av-hint">Max turns must be at least 10.</div>
         )}
       </div>
     </div>
@@ -1635,10 +1818,13 @@ function StandingsTable({ standings }: { standings: ArenaBotStanding[] }) {
               <th>Bot</th>
               <th>Provider / Model</th>
               <th>W</th>
-              <th>D</th>
+              <th>Duels</th>
               <th>Win %</th>
               <th>Total</th>
               <th>Avg</th>
+              <th>Prompt Tok</th>
+              <th>Compl Tok</th>
+              <th>LLM Calls</th>
             </tr>
           </thead>
           <tbody>
@@ -1664,6 +1850,9 @@ function StandingsTable({ standings }: { standings: ArenaBotStanding[] }) {
                     ? (s.totalScore / s.duelsPlayed).toFixed(1)
                     : "—"}
                 </td>
+                <td>{(s.totalPromptTokens ?? 0).toLocaleString()}</td>
+                <td>{(s.totalCompletionTokens ?? 0).toLocaleString()}</td>
+                <td>{s.totalLlmCalls ?? 0}</td>
               </tr>
             ))}
           </tbody>

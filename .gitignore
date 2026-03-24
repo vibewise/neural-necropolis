@@ -3,6 +3,7 @@ dist/
 data/
 .env
 tmp/
+/engine/results/
 *.js
 *.d.ts
 *.js.map

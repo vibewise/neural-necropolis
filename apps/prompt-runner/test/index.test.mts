@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,11 +10,14 @@ import {
   createJobRecord,
   ensureRunnerPaths,
   parsePromptManifestText,
+  requestModelCompletion,
   resolveRunnerPaths,
   startControlPlaneServer,
   upsertManifestRecord,
 } from "../src/index.ts";
 import type { PromptManifest } from "../src/index.ts";
+import type { HeroAction, LegalAction } from "@neural-necropolis/protocol-ts";
+import { selectMatchingAction } from "../src/worker.ts";
 
 function makeManifest(overrides: Partial<PromptManifest> = {}): PromptManifest {
   return {
@@ -332,5 +336,100 @@ test("purge clears stored hosted data once no jobs are active", async () => {
     assert.deepEqual(jobs.body, []);
   } finally {
     await harness.close();
+  }
+});
+
+test("selectMatchingAction preserves spellKind when multiple spell actions are legal", () => {
+  const legalActions: LegalAction[] = [
+    {
+      kind: "cast_spell",
+      spellKind: "locate_treasury",
+      description: "Cast Locate Treasury",
+    },
+    {
+      kind: "cast_spell",
+      spellKind: "locate_monsters",
+      description: "Cast Locate Monsters",
+    },
+  ];
+
+  const selected: HeroAction = {
+    kind: "cast_spell",
+    spellKind: "locate_monsters",
+  };
+
+  const matched = selectMatchingAction(legalActions, selected);
+  assert.equal(matched.kind, "cast_spell");
+  assert.equal(matched.spellKind, "locate_monsters");
+});
+
+test("requestModelCompletion forwards reasoning_effort to OpenAI-compatible providers", async () => {
+  let capturedBody: Record<string, unknown> | null = null;
+  const server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.from(chunk));
+    }
+    capturedBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        id: "chatcmpl-test",
+        object: "chat.completion",
+        created: Date.now(),
+        model: "test-model",
+        choices: [
+          {
+            index: 0,
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content: "ACTION: 0\nREASON: test",
+            },
+          },
+        ],
+      }),
+    );
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  try {
+    const address = server.address();
+    assert.notEqual(address, null);
+    assert.equal(typeof address, "object");
+    const baseUrl = `http://127.0.0.1:${address.port}/v1`;
+
+    const result = await requestModelCompletion(
+      {
+        provider: "openai",
+        model: "test-model",
+        baseUrl,
+        apiKey: "test-key",
+        temperature: 0.2,
+        maxOutputTokens: 96,
+        reasoningEffort: "high",
+      },
+      "system",
+      "user",
+      5_000,
+    );
+
+    assert.equal(result, "ACTION: 0\nREASON: test");
+    assert.equal(capturedBody?.reasoning_effort, "high");
+    assert.equal(capturedBody?.max_completion_tokens, 96);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
   }
 });

@@ -15,6 +15,7 @@ export type FeedItem = {
   label: string;
   detail: string;
   sortKey: number;
+  tone?: "combat" | "loot" | "effect" | "movement" | "system" | "bot";
 };
 
 export type HeaderStatus = {
@@ -81,7 +82,10 @@ export function deriveSelectedBoardSummary(
   snapshot: DashboardResponse | null,
 ): BoardSummary | null {
   if (selectedBoardId) {
-    return boards.find((board) => board.boardId === selectedBoardId) ?? null;
+    const selected = boards.find((board) => board.boardId === selectedBoardId);
+    if (selected) {
+      return selected;
+    }
   }
   if (!snapshot) {
     return boards[0] ?? null;
@@ -314,6 +318,7 @@ export function buildFeedItems(
     label: formatStreamLogLabel(entry),
     detail: entry.message,
     sortKey: entry.createdAt,
+    tone: classifyFeedTone(entry.message),
   }));
 
   return [...streamItems, ...botItems, ...eventItems]
@@ -355,6 +360,7 @@ function toEventFeedItem(event: EventRecord): FeedItem {
     label: `Turn ${event.turn} · ${event.type}`,
     detail: event.summary,
     sortKey: event.turn,
+    tone: classifyFeedTone(event.summary, event.type),
   };
 }
 
@@ -364,5 +370,44 @@ function toBotFeedItem(message: BotMessage): FeedItem {
     label: `${message.heroName} · Turn ${message.turn}`,
     detail: message.message,
     sortKey: message.createdAt,
+    tone: classifyFeedTone(message.message, "bot"),
   };
+}
+
+function classifyFeedTone(
+  text: string,
+  source?: string,
+): FeedItem["tone"] | undefined {
+  const normalized = `${source ?? ""} ${text}`.toLowerCase();
+
+  if (
+    /\b(hit|slew|slay|attack|attacked|dmg|damage|combat|death)\b/.test(
+      normalized,
+    )
+  ) {
+    return "combat";
+  }
+  if (
+    /\b(picked up|equipped|dropped|loot|treasure|used|drink|drank|consumed)\b/.test(
+      normalized,
+    )
+  ) {
+    return "loot";
+  }
+  if (
+    /\b(stat|morale|fatigue|heal|healed|poison|shield|effect|buff|debuff)\b/.test(
+      normalized,
+    )
+  ) {
+    return "effect";
+  }
+  if (
+    /\b(move|moved|opened a door|opened|repositions|patrols)\b/.test(normalized)
+  ) {
+    return "movement";
+  }
+  if (source === "bot") {
+    return "bot";
+  }
+  return "system";
 }

@@ -42,6 +42,7 @@ type Server struct {
 	heroSessions       map[string]heroSession
 	actionCache        map[string]cachedActionResponse
 	arenaTurnStates    map[string]arenaTurnState
+	arenaResultsDir    string
 }
 
 type arenaTurnState struct {
@@ -100,16 +101,27 @@ func (ctx *streamLogContext) prefix() string {
 
 	parts := make([]string, 0, 3)
 	if arenaID := strings.TrimSpace(ctx.ArenaID); arenaID != "" {
-		parts = append(parts, fmt.Sprintf("[arena:%s]", arenaID))
+		parts = append(parts, fmt.Sprintf("[arena:%s]", conciseContextID(arenaID)))
 	}
 	if matchID := strings.TrimSpace(ctx.MatchID); matchID != "" {
-		parts = append(parts, fmt.Sprintf("[match:%s]", matchID))
+		parts = append(parts, fmt.Sprintf("[match:%s]", conciseContextID(matchID)))
 	}
 	if ctx.DuelIndex != nil {
 		parts = append(parts, fmt.Sprintf("[duel:%d]", *ctx.DuelIndex))
 	}
 
 	return strings.Join(parts, "")
+}
+
+func conciseContextID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if head, _, found := strings.Cut(value, "-"); found && head != "" {
+		return head
+	}
+	return value
 }
 
 func (ctx *streamLogContext) format(message string) string {
@@ -133,7 +145,7 @@ const minResolveWindowMs = 50
 
 func New() *Server {
 	port, _ := strconv.Atoi(envOr("PORT", "3000"))
-	planningMs, _ := strconv.Atoi(envOr("BEAT_PLANNING_MS", "12000"))
+	planningMs, _ := strconv.Atoi(envOr("BEAT_PLANNING_MS", "15000"))
 	actionMs, _ := strconv.Atoi(envOr("BEAT_ACTION_MS", "500"))
 	if actionMs <= 0 {
 		actionMs = 500
@@ -145,7 +157,7 @@ func New() *Server {
 	}
 
 	return &Server{
-		mgr:                game.NewManager(),
+		mgr:                game.NewManagerWithSeed(strings.TrimSpace(envOr("DUNGEON_SEED", ""))),
 		arenas:             game.NewArenaManager(),
 		playerAuthToken:    resolvePlayerAuthToken(),
 		adminAuthToken:     resolveAdminAuthToken(),
@@ -167,6 +179,7 @@ func New() *Server {
 		heroSessions:    make(map[string]heroSession),
 		actionCache:     make(map[string]cachedActionResponse),
 		arenaTurnStates: make(map[string]arenaTurnState),
+		arenaResultsDir: filepath.Clean(envOr("ARENA_RESULTS_DIR", filepath.Join("results", "arenas"))),
 	}
 }
 
@@ -600,6 +613,9 @@ func (s *Server) emitContextLog(ctx *streamLogContext, message string) {
 		formatted = ctx.format(message)
 	}
 	log.Printf("%s", formatted)
+	if err := s.appendArenaTraceLog(ctx, formatted); err != nil {
+		log.Printf("arena trace write failed: %v", err)
+	}
 	s.broadcast("log", formatted)
 }
 

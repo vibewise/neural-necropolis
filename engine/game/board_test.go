@@ -158,3 +158,32 @@ func TestBoardEventsAfterIDReturnsNewEventsAfterTruncation(t *testing.T) {
 		t.Fatalf("returned events = %d, want %d", len(events), CFG.MaxEvents)
 	}
 }
+
+func TestBoardNextStepTowardFindsDirectPath(t *testing.T) {
+	board := newBoardWithState("path-direct")
+	hero := newTestHero("hero-path", "PathHero", Position{X: 1, Y: 1})
+	board.state.Heroes = []HeroProfile{hero}
+
+	direction, ok := board.NextStepToward(hero.ID, []Position{{X: 4, Y: 1}})
+	if !ok {
+		t.Fatal("NextStepToward returned ok=false, want true")
+	}
+	if direction != East {
+		t.Fatalf("direction = %s, want %s", direction, East)
+	}
+}
+
+func TestBoardNextStepTowardAvoidsHazards(t *testing.T) {
+	board := newBoardWithState("path-hazard")
+	hero := newTestHero("hero-safe", "SafeHero", Position{X: 1, Y: 1})
+	board.state.Heroes = []HeroProfile{hero}
+	board.state.Map.Tiles[1][2] = TileLava
+
+	direction, ok := board.NextStepToward(hero.ID, []Position{{X: 3, Y: 1}})
+	if !ok {
+		t.Fatal("NextStepToward returned ok=false, want true")
+	}
+	if direction != South {
+		t.Fatalf("direction = %s, want %s", direction, South)
+	}
+}

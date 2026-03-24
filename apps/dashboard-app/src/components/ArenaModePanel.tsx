@@ -145,12 +145,7 @@ function ArenaCreator({ adminToken, onSubmit, busy }: ArenaCreatorProps) {
       <div className="arena-bots-list">
         <h4>
           Bots ({bots.length}){" "}
-          <button
-            type="button"
-            className="ghost small"
-            onClick={addBot}
-            disabled={bots.length >= 8}
-          >
+          <button type="button" className="ghost small" onClick={addBot}>
             + Add Bot
           </button>
         </h4>
@@ -366,7 +361,6 @@ function StandingsTable({ standings }: { standings: ArenaBotStanding[] }) {
             <th>Provider / Model</th>
             <th>Wins</th>
             <th>Duels</th>
-            <th>Win Rate</th>
             <th>Total Score</th>
             <th>Avg Score</th>
           </tr>

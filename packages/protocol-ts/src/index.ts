@@ -499,6 +499,20 @@ export type ArenaBotConfig = {
   provider: string;
   model: string;
   strategy: string;
+  promptStyle?: "smart" | "naive";
+  maxOutputTokens?: number;
+  temperature?: number;
+  reasoningEffort?: "low" | "medium" | "high";
+};
+
+export type DuelHeroTokenStats = {
+  heroId: string;
+  botIndex: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  llmCalls: number;
+  fallbacks: number;
 };
 
 export type DuelResult = {
@@ -511,6 +525,7 @@ export type DuelResult = {
   turnReached: number;
   completedAt?: number;
   botPositions: number[];
+  tokenStats?: DuelHeroTokenStats[];
 };
 
 export type ArenaMatchSnapshot = {
@@ -533,6 +548,9 @@ export type ArenaBotStanding = {
   wins: number;
   duelsPlayed: number;
   totalScore: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalLlmCalls: number;
 };
 
 export type ArenaSnapshot = {

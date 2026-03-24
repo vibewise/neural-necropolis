@@ -14,13 +14,19 @@ type Manager struct {
 	order     []string          // insertion order for listing
 	queueSize int
 	rng       *Rng
+	fixedSeed string
 }
 
 func NewManager() *Manager {
+	return NewManagerWithSeed("")
+}
+
+func NewManagerWithSeed(seed string) *Manager {
 	m := &Manager{
 		boards:    make(map[string]*Board),
 		queueSize: CFG.PreparedBoardQueue,
 		rng:       NewRng(fmt.Sprintf("manager-%d", time.Now().UnixNano())),
+		fixedSeed: seed,
 	}
 	m.EnsureOpenBoard()
 	return m
@@ -29,6 +35,9 @@ func NewManager() *Manager {
 func (m *Manager) createBoardLocked(lifecycle BoardLifecycle) *Board {
 	id := GenerateBoardID(m.rng)
 	seed := fmt.Sprintf("%s-%d", id, time.Now().UnixNano())
+	if m.fixedSeed != "" {
+		seed = m.fixedSeed
+	}
 	b := NewBoard(id, seed, CFG.MaxBotsPerBoard)
 	b.SetLifecycle(lifecycle)
 	if lifecycle == LifecycleQueued {

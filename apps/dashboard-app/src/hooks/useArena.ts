@@ -29,14 +29,14 @@ export function useArena({ apiBase }: UseArenaOptions) {
   const arenasQuery = useQuery({
     queryKey: ["arenas", apiBase],
     queryFn: () => fetchArenas(apiBase),
-    refetchInterval: 5_000,
+    refetchInterval: 2_000,
   });
 
   const arenaDetailQuery = useQuery({
     queryKey: ["arena", apiBase, selectedArenaId],
     queryFn: () => fetchArena(apiBase, selectedArenaId!),
     enabled: !!selectedArenaId,
-    refetchInterval: 2_000,
+    refetchInterval: 1_000,
   });
 
   useEffect(() => {

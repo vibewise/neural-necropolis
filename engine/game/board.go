@@ -729,6 +729,89 @@ func (b *Board) activeSpellDiscoveries(heroID string) []SpellDiscovery {
 	return active
 }
 
+func (b *Board) NextStepToward(heroID string, targets []Position) (Direction, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if len(targets) == 0 {
+		return "", false
+	}
+
+	var hero *HeroProfile
+	for i := range b.state.Heroes {
+		if b.state.Heroes[i].ID == heroID {
+			hero = &b.state.Heroes[i]
+			break
+		}
+	}
+	if hero == nil || hero.Status != StatusAlive {
+		return "", false
+	}
+
+	targetSet := make(map[Position]struct{}, len(targets))
+	for _, target := range targets {
+		if target == hero.Position {
+			return "", false
+		}
+		targetSet[target] = struct{}{}
+	}
+
+	hasKey := hasItem(hero, ItemKey)
+	start := hero.Position
+	queue := []Position{start}
+	visited := map[Position]bool{start: true}
+	firstStep := make(map[Position]Direction)
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		for _, dir := range AllDirections {
+			next := MoveInDir(current, dir)
+			if visited[next] || !b.pathableForHeroLocked(next, hasKey) || b.liveMonsterAtLocked(next) {
+				continue
+			}
+			visited[next] = true
+			step := dir
+			if current != start {
+				step = firstStep[current]
+			}
+			firstStep[next] = step
+			if _, ok := targetSet[next]; ok {
+				return step, true
+			}
+			queue = append(queue, next)
+		}
+	}
+
+	return "", false
+}
+
+func (b *Board) pathableForHeroLocked(pos Position, hasKey bool) bool {
+	if pos.X < 0 || pos.Y < 0 || pos.Y >= b.state.Map.Height || pos.X >= b.state.Map.Width {
+		return false
+	}
+
+	tile := b.state.Map.Tiles[pos.Y][pos.X]
+	switch tile {
+	case TileWall, TileLava, TileTrapVisible:
+		return false
+	case TileDoorLocked, TileChestLocked:
+		return hasKey
+	default:
+		return true
+	}
+}
+
+func (b *Board) liveMonsterAtLocked(pos Position) bool {
+	for _, monster := range b.state.Monsters {
+		if monster.Hp > 0 && monster.Position == pos {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Board) getLegalActions(hero *HeroProfile) []LegalAction {
 	if hero.Status != StatusAlive {
 		return []LegalAction{}

@@ -436,7 +436,7 @@ function selectFallbackAction(
   return legalActions[0];
 }
 
-function selectMatchingAction(
+export function selectMatchingAction(
   legalActions: LegalAction[],
   action: HeroAction,
 ): HeroAction {
@@ -450,7 +450,8 @@ function actionsEqual(left: HeroAction, right: HeroAction): boolean {
     left.kind === right.kind &&
     left.direction === right.direction &&
     left.targetId === right.targetId &&
-    left.itemId === right.itemId
+    left.itemId === right.itemId &&
+    left.spellKind === right.spellKind
   );
 }
 

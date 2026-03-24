@@ -870,8 +870,18 @@ func ResolveTurn(state *BoardState) *BoardState {
 			events = append(events, evt(next.Turn, EventSystem, fmt.Sprintf("%s cast %s and discovered %d locations.", botTag(hero.Name), spell, len(positions))))
 		}
 
-		// Make bot outcomes visible in feed even when no special interaction event fired.
-		if hero.Status == StatusAlive && strings.TrimSpace(hero.LastAction) != "" {
+		// Emit a system summary only for actions that didn't already produce a
+		// specific event (combat, loot, interaction, movement, etc.).
+		// This keeps the live feed clean while still surfacing "idle", "rested",
+		// "waited", and similar low-signal turns.
+		hasSpecificEvent := false
+		for _, e := range events {
+			if e.Turn == next.Turn && e.Type != EventSystem && strings.Contains(e.Summary, botTag(hero.Name)) {
+				hasSpecificEvent = true
+				break
+			}
+		}
+		if !hasSpecificEvent && hero.Status == StatusAlive && strings.TrimSpace(hero.LastAction) != "" {
 			events = append(events, evt(next.Turn, EventSystem, fmt.Sprintf("%s %s.", botTag(hero.Name), hero.LastAction)))
 		}
 

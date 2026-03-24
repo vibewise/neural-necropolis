@@ -106,6 +106,11 @@ Then choose one optional attachment path:
 - direct bots: scripted, AI bots, or OpenClaw
 - hosted prompt jobs through prompt runner
 
+Arena mode can also run mixed model providers inside the engine itself. Each
+configured arena bot has its own `provider` and `model`, so a two-bot duel can
+pair `openai / gpt-4o` against `groq / llama-3.3-70b-versatile` as long as the
+engine process has both `OPENAI_API_KEY` and `GROQ_API_KEY` available.
+
 The shared SDK is the supported client entrypoint for TypeScript bots. Start with [docs/CONNECT_YOUR_BOT.md](docs/CONNECT_YOUR_BOT.md) if you want to attach your own bot instead of using a bundled runtime.
 
 If you are self-hosting the server, the equivalent local flow is:
